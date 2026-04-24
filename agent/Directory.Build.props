@@ -1,0 +1,29 @@
+<Project>
+  <!--
+    STS2 Game Directory Configuration
+    ==================================
+    $(GameDir)     : path to the 'data_sts2_windows_x86_64' folder with all game DLLs.
+    $(GameRootDir) : path to the game root folder (contains the mods/ directory).
+
+    The defaults below match a standard Steam installation on Windows.
+
+    To override WITHOUT committing your personal path, create the file
+    'agent/Directory.Build.user.props' (this file is gitignored):
+
+        <Project>
+          <PropertyGroup>
+            <GameDir>D:\SteamLibrary\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64</GameDir>
+            <GameRootDir>D:\SteamLibrary\steamapps\common\Slay the Spire 2</GameRootDir>
+          </PropertyGroup>
+        </Project>
+  -->
+  <Import Project="Directory.Build.user.props" Condition="Exists('Directory.Build.user.props')" />
+
+  <PropertyGroup>
+    <GameDir      Condition="'$(GameDir)'      == ''">C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64</GameDir>
+    <GameRootDir  Condition="'$(GameRootDir)'  == ''">C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2</GameRootDir>
+
+    <!-- Must match manifest.json "id" field AND the compiled DLL filename. -->
+    <ModId>sts2_ai_agent</ModId>
+  </PropertyGroup>
+</Project>

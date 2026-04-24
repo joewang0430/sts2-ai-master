@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Mirror the game's exact build configuration to guarantee ABI compatibility. -->
+    <TargetFramework>net9.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>13</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- AssemblyName MUST match manifest.json "id", as the game loads {id}.dll by name. -->
+    <AssemblyName>$(ModId)</AssemblyName>
+    <RootNamespace>STS2.Agent</RootNamespace>
+
+    <!--
+      Deploy directly into the game's mods folder on every build.
+      This eliminates the manual copy step during local iteration.
+      The game picks up the DLL from here on next launch.
+    -->
+    <OutputPath>$(GameRootDir)\mods\$(ModId)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <!--
+    Game DLL references: compile-time only.
+    Private=false ensures these are NOT copied to OutputPath.
+    At runtime they are already loaded inside the game process.
+  -->
+  <ItemGroup>
+    <Reference Include="sts2">
+      <HintPath>$(GameDir)\sts2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GodotSharp">
+      <HintPath>$(GameDir)\GodotSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameDir)\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Manifest is part of the mod package; deploy it alongside the DLL. -->
+  <ItemGroup>
+    <Content Include="manifest.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,10 @@
+{
+  "id": "sts2_ai_agent",
+  "name": "STS2 AI Agent",
+  "author": "Wang",
+  "description": "An AI agent that calculates the optimal card play sequence each turn to defeat enemies with minimum HP loss.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": false
+}

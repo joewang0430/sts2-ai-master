@@ -20,3 +20,6 @@ dev_docs/
 Thumbs.db
 
 STS2_AI_Master.sln
+
+# User-specific game path overrides (local machine only)
+agent/Directory.Build.user.props
