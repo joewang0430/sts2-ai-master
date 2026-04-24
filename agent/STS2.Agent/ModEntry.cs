@@ -1,4 +1,6 @@
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Modding;
+using STS2.Agent.Ui;
 
 namespace STS2.Agent;
 
@@ -17,8 +19,11 @@ public static class ModEntry
 {
     public static void Initialize()
     {
-        // TODO: wire up subsystems as they are built:
-        //   1. Harmony patches (UI button injection into combat screen)
-        //   2. AI engine initialization (search state allocators, etc.)
+        // Apply all [HarmonyPatch] classes in this assembly.
+        new Harmony("sts2_ai_agent").PatchAll();
+
+        // Wire up the combat debug overlay (event subscriptions live for the
+        // entire process lifetime; the Label node is created/destroyed per combat).
+        CombatDebugOverlay.Initialize();
     }
 }
