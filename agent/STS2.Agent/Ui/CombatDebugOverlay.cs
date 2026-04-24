@@ -158,6 +158,13 @@ internal static class CombatDebugOverlay
                     string costStr = card.EnergyCost.CostsX ? $"X={cost}" : cost.ToString();
                     sb.AppendLine($"  [{costStr}] {card.Title}");
                 }
+
+                if (pc.Powers.Count > 0)
+                {
+                    sb.AppendLine("  Powers:");
+                    foreach (PowerModel power in pc.Powers)
+                        sb.AppendLine($"    {power.Title.GetFormattedText()} {power.Amount} [{power.Type}]");
+                }
             }
         }
 
@@ -171,6 +178,12 @@ internal static class CombatDebugOverlay
 
             sb.AppendLine($"{enemy.Name}");
             sb.AppendLine($"  HP:{enemy.CurrentHp}/{enemy.MaxHp}  Block:{enemy.Block}");
+
+            if (enemy.Powers.Count > 0)
+            {
+                foreach (PowerModel power in enemy.Powers)
+                    sb.AppendLine($"  {power.Title.GetFormattedText()} {power.Amount} [{power.Type}]");
+            }
 
             if (enemy.IsStunned)
             {
