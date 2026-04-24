@@ -47,9 +47,9 @@ internal static class CombatDebugOverlay
 
     internal static void Initialize()
     {
-        CombatManager.Instance.CombatSetUp += OnCombatSetUp;
-        CombatManager.Instance.TurnStarted += OnTurnChanged;
-        CombatManager.Instance.CombatEnded += OnCombatEnded;
+        CombatManager.Instance.CombatSetUp           += OnCombatSetUp;
+        CombatManager.Instance.StateTracker.CombatStateChanged += OnCombatStateChanged;
+        CombatManager.Instance.CombatEnded           += OnCombatEnded;
     }
 
     // ── Combat-room node setup (called by Harmony patch below) ────────────────
@@ -91,7 +91,7 @@ internal static class CombatDebugOverlay
         Refresh();
     }
 
-    private static void OnTurnChanged(CombatState state)
+    private static void OnCombatStateChanged(CombatState state)
     {
         _state = state;
         Refresh();
