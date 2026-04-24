@@ -43,6 +43,8 @@ internal static class CombatDebugOverlay
 
     private static Label?     _label;
     private static ColorRect? _bg;
+    private static Label?     _labelRight;
+    private static ColorRect? _bgRight;
     private static CombatState? _state;
 
     // ── Initialization ────────────────────────────────────────────────────────
@@ -78,8 +80,29 @@ internal static class CombatDebugOverlay
         };
         _label.AddThemeFontSizeOverride("font_size", 13);
 
+        // Right column — relics
+        _bgRight = new ColorRect
+        {
+            Color       = new Color(0f, 0f, 0f, 0.65f),
+            Position    = new Vector2(360f, 8f),
+            Size        = new Vector2(180f, 480f),
+            ZIndex      = 99,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _labelRight = new Label
+        {
+            Position     = new Vector2(364f, 12f),
+            Size         = new Vector2(172f, 472f),
+            ZIndex       = 100,
+            MouseFilter  = Control.MouseFilterEnum.Ignore,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+        };
+        _labelRight.AddThemeFontSizeOverride("font_size", 13);
+
         room.AddChild(_bg);
         room.AddChild(_label);
+        room.AddChild(_bgRight);
+        room.AddChild(_labelRight);
 
         // CombatSetUp always fires before _Ready, so _state is already populated.
         Refresh();
@@ -101,9 +124,11 @@ internal static class CombatDebugOverlay
 
     private static void OnCombatEnded(CombatRoom _)
     {
-        _state = null;
-        _label = null;
-        _bg    = null;
+        _state      = null;
+        _label      = null;
+        _bg         = null;
+        _labelRight = null;
+        _bgRight    = null;
         // The actual Godot nodes are freed automatically when the scene unloads.
     }
 
@@ -116,12 +141,16 @@ internal static class CombatDebugOverlay
         if (_state is null)
         {
             _label.Text = string.Empty;
+            if (_labelRight is not null && GodotObject.IsInstanceValid(_labelRight))
+                _labelRight.Text = string.Empty;
             return;
         }
 
         try
         {
-            _label.Text = BuildText(_state);
+            _label.Text = BuildMainText(_state);
+            if (_labelRight is not null && GodotObject.IsInstanceValid(_labelRight))
+                _labelRight.Text = BuildRelicText(_state);
         }
         catch (Exception ex)
         {
@@ -129,9 +158,9 @@ internal static class CombatDebugOverlay
         }
     }
 
-    // ── Text builder ──────────────────────────────────────────────────────────
+    // ── Text builders ─────────────────────────────────────────────────────────
 
-    private static string BuildText(CombatState state)
+    private static string BuildMainText(CombatState state)
     {
         var sb = new StringBuilder(512);
 
@@ -165,19 +194,6 @@ internal static class CombatDebugOverlay
                     sb.AppendLine("  Powers:");
                     foreach (PowerModel power in pc.Powers)
                         sb.AppendLine($"    {power.Title.GetFormattedText()} {power.Amount} [{power.Type}]");
-                }
-
-                // Relics: show Id.Entry + Status; skip melted (inactive) ones.
-                var activeRelics = me.Relics.Where(r => !r.IsMelted).ToList();
-                if (activeRelics.Count > 0)
-                {
-                    sb.AppendLine($"  Relics({activeRelics.Count}):");
-                    foreach (RelicModel relic in activeRelics)
-                    {
-                        string statusTag = relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Active   ? "*" :
-                                           relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Disabled ? "!" : "";
-                        sb.AppendLine($"    {relic.Id.Entry}{statusTag}");
-                    }
                 }
             }
         }
@@ -223,6 +239,23 @@ internal static class CombatDebugOverlay
             }
         }
 
+        return sb.ToString();
+    }
+
+    private static string BuildRelicText(CombatState state)
+    {
+        var sb = new StringBuilder(256);
+        Player? me = LocalContext.GetMe(state);
+        if (me is null) return string.Empty;
+
+        var relics = me.Relics.Where(r => !r.IsMelted).ToList();
+        sb.AppendLine($"── RELICS ({relics.Count}) ──");
+        foreach (RelicModel relic in relics)
+        {
+            string statusTag = relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Active   ? " *" :
+                               relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Disabled ? " !" : "";
+            sb.AppendLine($"{relic.Id.Entry}{statusTag}");
+        }
         return sb.ToString();
     }
 
