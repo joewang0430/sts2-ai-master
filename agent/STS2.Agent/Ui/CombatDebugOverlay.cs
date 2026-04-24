@@ -186,7 +186,57 @@ internal static class CombatDebugOverlay
                         ? pcs.Energy
                         : card.EnergyCost.GetWithModifiers(CostModifiers.All);
                     string costStr = card.EnergyCost.CostsX ? $"X={cost}" : cost.ToString();
-                    sb.AppendLine($"  [{costStr}] {card.Title}");
+
+                    // Tier-1 AI data: playability, card type, target type.
+                    bool canPlay  = card.CanPlay();
+                    char typeChar = card.Type switch
+                    {
+                        CardType.Attack => 'A',
+                        CardType.Skill  => 'S',
+                        CardType.Power  => 'P',
+                        CardType.Curse  => 'C',
+                        CardType.Quest  => 'Q',
+                        _               => '?',   // Status / None
+                    };
+                    string tgtStr = card.TargetType switch
+                    {
+                        TargetType.AnyEnemy           => "E",
+                        TargetType.AllEnemies         => "*E",
+                        TargetType.RandomEnemy        => "?E",
+                        TargetType.Self               => "@",
+                        TargetType.AnyPlayer          => "Ply",
+                        TargetType.AnyAlly            => "Aly",
+                        TargetType.AllAllies          => "*A",
+                        TargetType.TargetedNoCreature => "obj",
+                        TargetType.Osty               => "Ost",
+                        _                             => "-",
+                    };
+                    // Tier-3: upgrade marker and urgency keywords.
+                    // [+]  = card is upgraded
+                    // [Eth] = Ethereal (exhausts at turn end if unplayed → holding it has a cost)
+                    // [Ret] = Retain   (stays in hand next turn → low urgency)
+                    // [Exh] = Exhaust keyword (consumed on play, not just Ethereal)
+                    // [Sly] = Sly      (can be played while Dazed)
+                    string upgradeMark = card.IsUpgraded ? "[+]" : string.Empty;
+
+                    var kw = card.Keywords;
+                    // Use ShouldRetainThisTurn so single-turn Retain is also caught.
+                    bool isEthereal = kw.Contains(CardKeyword.Ethereal);
+                    bool isRetain   = card.ShouldRetainThisTurn;
+                    bool isExhaust  = kw.Contains(CardKeyword.Exhaust);
+                    bool isSly      = card.IsSlyThisTurn;
+
+                    // Build a compact flags string; empty when no flags apply.
+                    string flags = string.Concat(
+                        upgradeMark,
+                        isEthereal ? "[Eth]" : string.Empty,
+                        isRetain   ? "[Ret]" : string.Empty,
+                        isExhaust  ? "[Exh]" : string.Empty,
+                        isSly      ? "[Sly]" : string.Empty);
+
+                    // Bracket shows '!' prefix when the card cannot currently be played.
+                    string costBracket = canPlay ? $"[{costStr}]" : $"[!{costStr}]";
+                    sb.AppendLine($"  {costBracket} {typeChar}:{tgtStr} {card.Title}{flags}");
                 }
 
                 if (pc.Powers.Count > 0)
