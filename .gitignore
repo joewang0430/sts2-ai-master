@@ -1,0 +1,22 @@
+﻿# C# / .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# Godot
+.godot/
+*.import
+
+# Custom Project Folders to ignore
+game_source/
+docs/
+dev_docs/
+
+# General OS files
+.DS_Store
+Thumbs.db
+
+STS2_AI_Master.sln
