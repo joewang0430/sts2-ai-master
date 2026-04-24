@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Godot;
 using HarmonyLib;
@@ -147,7 +149,6 @@ internal static class CombatDebugOverlay
             {
                 sb.AppendLine($"Energy: {pcs.Energy}/{pcs.MaxEnergy}  Stars: {pcs.Stars}");
                 sb.AppendLine($"Hand:{pcs.Hand.Cards.Count}  Draw:{pcs.DrawPile.Cards.Count}  Disc:{pcs.DiscardPile.Cards.Count}");
-                sb.AppendLine();
 
                 foreach (CardModel card in pcs.Hand.Cards)
                 {
@@ -165,11 +166,23 @@ internal static class CombatDebugOverlay
                     foreach (PowerModel power in pc.Powers)
                         sb.AppendLine($"    {power.Title.GetFormattedText()} {power.Amount} [{power.Type}]");
                 }
+
+                // Relics: show Id.Entry + Status; skip melted (inactive) ones.
+                var activeRelics = me.Relics.Where(r => !r.IsMelted).ToList();
+                if (activeRelics.Count > 0)
+                {
+                    sb.AppendLine($"  Relics({activeRelics.Count}):");
+                    foreach (RelicModel relic in activeRelics)
+                    {
+                        string statusTag = relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Active   ? "*" :
+                                           relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Disabled ? "!" : "";
+                        sb.AppendLine($"    {relic.Id.Entry}{statusTag}");
+                    }
+                }
             }
         }
 
         // ── Enemies ───────────────────────────────────────────────────────────
-        sb.AppendLine();
         sb.AppendLine("── ENEMIES ─────────────");
 
         foreach (Creature enemy in state.Enemies)
