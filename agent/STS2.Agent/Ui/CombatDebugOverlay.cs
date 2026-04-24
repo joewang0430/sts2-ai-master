@@ -171,7 +171,7 @@ internal static class CombatDebugOverlay
             Creature           pc  = me.Creature;
             PlayerCombatState? pcs = me.PlayerCombatState;
 
-            sb.AppendLine("── PLAYER ──────────────");
+            sb.AppendLine($"── {me.Character.Id.Entry} ──────────────");
             sb.AppendLine($"HP: {pc.CurrentHp}/{pc.MaxHp}  Block: {pc.Block}");
 
             if (pcs is not null)
