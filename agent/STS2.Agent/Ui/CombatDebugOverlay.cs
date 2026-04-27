@@ -11,6 +11,7 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
+using MegaCrit.Sts2.Core.Entities.Potions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Rooms;
 
@@ -46,6 +47,31 @@ internal static class CombatDebugOverlay
     private static Label?     _labelRight;
     private static ColorRect? _bgRight;
     private static CombatState? _state;
+
+    // ── Potion-selection state ────────────────────────────────────────────────
+    // _potionLayer: a dedicated CanvasLayer with a high Layer value. Children
+    // of a CanvasLayer bypass sibling draw/input ordering, so our interactive
+    // buttons reliably receive mouse clicks even when the game adds full-screen
+    // Control overlays (targeting arrow, card drag, etc.) after _Ready.
+    private static CanvasLayer?   _potionLayer;
+    private static ColorRect?     _bgPotions;
+    private static VBoxContainer? _potionButtonBox;
+    private static Label?         _potionApprovedLabel;
+
+    // Authoritative toggle state: keys are PotionModel.Id.Entry.
+    // Written only by button Pressed handlers; read by the AI layer via AllowedPotionIds.
+    // Cleared on every OnCombatEnded so each fight starts with a fresh selection.
+    private static readonly HashSet<string>            _allowedPotionIds = new();
+    // Id.Entry → Button node (for text updates on toggle and on potion consumption).
+    private static readonly Dictionary<string, Button> _potionButtons    = new();
+    // Id.Entry → localized display title (stable within a combat).
+    private static readonly Dictionary<string, string> _potionTitles     = new();
+
+    /// <summary>
+    /// Potion IDs the player has approved for AI use this combat.
+    /// Read by the AI search layer; never modified by it.
+    /// </summary>
+    internal static IReadOnlySet<string> AllowedPotionIds => _allowedPotionIds;
 
     // ── Initialization ────────────────────────────────────────────────────────
 
@@ -104,7 +130,50 @@ internal static class CombatDebugOverlay
         room.AddChild(_bgRight);
         room.AddChild(_labelRight);
 
+        // ── Third column — potion selection ───────────────────────────────────
+        // Parent the interactive widgets to a CanvasLayer so their input is
+        // processed AFTER (i.e. ABOVE) every Control in the game's scene tree.
+        // Layer 100 is well above any layer the base game uses for combat UI.
+        _potionLayer = new CanvasLayer { Layer = 100 };
+
+        _bgPotions = new ColorRect
+        {
+            Color       = new Color(0f, 0f, 0f, 0.65f),
+            Position    = new Vector2(548f, 8f),
+            Size        = new Vector2(220f, 480f),
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+
+        // VBoxContainer auto-stacks children vertically; MouseFilter=Pass so
+        // clicks pass through the container itself but stop on the Button children.
+        _potionButtonBox = new VBoxContainer
+        {
+            Position          = new Vector2(552f, 12f),
+            CustomMinimumSize = new Vector2(212f, 0f),
+            MouseFilter       = Control.MouseFilterEnum.Pass,
+        };
+
+        // Summary label showing which potions the AI is permitted to use.
+        _potionApprovedLabel = new Label
+        {
+            Position     = new Vector2(552f, 340f),
+            Size         = new Vector2(212f, 140f),
+            MouseFilter  = Control.MouseFilterEnum.Ignore,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+        };
+        _potionApprovedLabel.AddThemeFontSizeOverride("font_size", 12);
+
+        // CanvasLayer must be added to the scene tree first; then widgets become
+        // its children. It is attached to the room so it is freed with the scene.
+        room.AddChild(_potionLayer);
+        _potionLayer.AddChild(_bgPotions);
+        _potionLayer.AddChild(_potionButtonBox);
+        _potionLayer.AddChild(_potionApprovedLabel);
+
         // CombatSetUp always fires before _Ready, so _state is already populated.
+        if (_state is not null)
+            RebuildPotionButtons(_state);
+
         Refresh();
     }
 
@@ -124,11 +193,18 @@ internal static class CombatDebugOverlay
 
     private static void OnCombatEnded(CombatRoom _)
     {
-        _state      = null;
-        _label      = null;
-        _bg         = null;
-        _labelRight = null;
-        _bgRight    = null;
+        _state               = null;
+        _label               = null;
+        _bg                  = null;
+        _labelRight          = null;
+        _bgRight             = null;
+        _bgPotions           = null;
+        _potionButtonBox     = null;
+        _potionApprovedLabel = null;
+        _potionLayer         = null;
+        _allowedPotionIds.Clear();
+        _potionButtons.Clear();
+        _potionTitles.Clear();
         // The actual Godot nodes are freed automatically when the scene unloads.
     }
 
@@ -143,6 +219,8 @@ internal static class CombatDebugOverlay
             _label.Text = string.Empty;
             if (_labelRight is not null && GodotObject.IsInstanceValid(_labelRight))
                 _labelRight.Text = string.Empty;
+            if (_potionApprovedLabel is not null && GodotObject.IsInstanceValid(_potionApprovedLabel))
+                _potionApprovedLabel.Text = string.Empty;
             return;
         }
 
@@ -151,6 +229,28 @@ internal static class CombatDebugOverlay
             _label.Text = BuildMainText(_state);
             if (_labelRight is not null && GodotObject.IsInstanceValid(_labelRight))
                 _labelRight.Text = BuildRelicText(_state);
+
+            // Detect divergence between our tracked potions and the live list:
+            //   - CombatSetUp may fire before _Ready, or Player.Potions may be
+            //     unpopulated at that early moment.
+            //   - A potion may be gained mid-combat (some relics do this).
+            // A consumed potion is NOT divergence — RefreshPotionButtons disables
+            // it in place so the user can still see what was available.
+            Player? me   = LocalContext.GetMe(_state);
+            var     live = me?.Potions
+                               .Where(p => p.Usage == PotionUsage.CombatOnly || p.Usage == PotionUsage.AnyTime)
+                               .Select(p => p.Id.Entry)
+                               .ToHashSet()
+                           ?? new HashSet<string>();
+
+            bool needsRebuild = _potionButtons.Count == 0
+                ? live.Count > 0
+                : live.Any(id => !_potionButtons.ContainsKey(id));
+
+            if (needsRebuild)
+                RebuildPotionButtons(_state);
+            else
+                RefreshPotionButtons(_state);
         }
         catch (Exception ex)
         {
@@ -307,6 +407,139 @@ internal static class CombatDebugOverlay
             sb.AppendLine($"{relic.Id.Entry}{statusTag}");
         }
         return sb.ToString();
+    }
+
+    // ── Potion helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Wipes and rebuilds the potion button column from scratch.
+    /// Called once per combat, from OnCombatRoomReady after the scene tree is ready.
+    /// </summary>
+    private static void RebuildPotionButtons(CombatState state)
+    {
+        if (_potionButtonBox is null || !GodotObject.IsInstanceValid(_potionButtonBox)) return;
+
+        // Destroy all previous children (header + buttons from last combat if any).
+        foreach (Node child in _potionButtonBox.GetChildren())
+            child.QueueFree();
+        _potionButtons.Clear();
+        _potionTitles.Clear();
+
+        Player? me = LocalContext.GetMe(state);
+        if (me is null) return;
+
+        // Only potions that can be actively triggered by the player during combat.
+        var combatPotions = me.Potions
+            .Where(p => p.Usage == PotionUsage.CombatOnly || p.Usage == PotionUsage.AnyTime)
+            .ToList();
+
+        // Non-interactive header label.
+        var header = new Label { Text = $"── POTIONS ({combatPotions.Count}) ──" };
+        header.AddThemeFontSizeOverride("font_size", 13);
+        header.MouseFilter = Control.MouseFilterEnum.Ignore;
+        _potionButtonBox.AddChild(header);
+
+        foreach (PotionModel potion in combatPotions)
+        {
+            string id    = potion.Id.Entry;
+            string title = potion.Title.GetFormattedText();
+            _potionTitles[id] = title;
+
+            var btn = new Button
+            {
+                Text              = GetPotionButtonText(id),
+                CustomMinimumSize = new Vector2(200f, 24f),
+                ZIndex            = 100,
+                // MouseFilter defaults to Stop: button consumes mouse events,
+                // so clicks do NOT reach the game's card/targeting layer.
+            };
+            btn.AddThemeFontSizeOverride("font_size", 12);
+
+            string capturedId = id;
+            btn.Pressed += () =>
+            {
+                // Toggle the authoritative selection set.
+                if (!_allowedPotionIds.Remove(capturedId))
+                    _allowedPotionIds.Add(capturedId);
+
+                // Update only this button's label — no full scene Refresh needed.
+                if (_potionButtons.TryGetValue(capturedId, out Button? b)
+                    && GodotObject.IsInstanceValid(b))
+                {
+                    b.Text = GetPotionButtonText(capturedId);
+                }
+                UpdateApprovedLabel();
+            };
+
+            _potionButtonBox.AddChild(btn);
+            _potionButtons[id] = btn;
+        }
+
+        if (combatPotions.Count == 0)
+        {
+            var none = new Label { Text = "  (none)" };
+            none.MouseFilter = Control.MouseFilterEnum.Ignore;
+            _potionButtonBox.AddChild(none);
+        }
+
+        UpdateApprovedLabel();
+    }
+
+    /// <summary>
+    /// Lightweight update called on every CombatStateChanged.
+    /// Marks consumed potions as disabled and removes them from the allowed set.
+    /// Does NOT rebuild button nodes.
+    /// </summary>
+    private static void RefreshPotionButtons(CombatState state)
+    {
+        if (_potionButtons.Count == 0) return;
+
+        Player? me = LocalContext.GetMe(state);
+        var alive = me?.Potions.Select(p => p.Id.Entry).ToHashSet()
+                    ?? new HashSet<string>();
+
+        // If a potion was consumed mid-combat, evict it from the allowed set
+        // so the AI never operates on a stale approval.
+        _allowedPotionIds.IntersectWith(alive);
+
+        foreach (var (id, btn) in _potionButtons)
+        {
+            if (!GodotObject.IsInstanceValid(btn)) continue;
+            bool consumed = !alive.Contains(id);
+            btn.Disabled = consumed;
+            btn.Text = consumed
+                ? $"[x] {(_potionTitles.TryGetValue(id, out string? t) ? t : id)}"
+                : GetPotionButtonText(id);
+        }
+
+        UpdateApprovedLabel();
+    }
+
+    /// <summary>Returns the toggle-prefix + localized title for a potion button.</summary>
+    private static string GetPotionButtonText(string id)
+    {
+        string title = _potionTitles.TryGetValue(id, out string? t) ? t : id;
+        return (_allowedPotionIds.Contains(id) ? "[v] " : "[ ] ") + title;
+    }
+
+    /// <summary>
+    /// Refreshes the "AI approved" summary label below the toggle buttons.
+    /// Always reads from _state and _allowedPotionIds; safe to call at any time.
+    /// </summary>
+    private static void UpdateApprovedLabel()
+    {
+        if (_potionApprovedLabel is null || !GodotObject.IsInstanceValid(_potionApprovedLabel)) return;
+        if (_state is null) { _potionApprovedLabel.Text = string.Empty; return; }
+
+        Player? me = LocalContext.GetMe(_state);
+        var alive = me?.Potions.Select(p => p.Id.Entry).ToHashSet()
+                    ?? new HashSet<string>();
+
+        var approved = _allowedPotionIds.Where(id => alive.Contains(id)).ToList();
+        _potionApprovedLabel.Text = approved.Count == 0
+            ? "── AI POTIONS ──\n  (none)"
+            : "── AI POTIONS ──\n" + string.Join("\n", approved.Select(id =>
+                $"  {(_potionTitles.TryGetValue(id, out string? t) ? t : id)}"));
     }
 
     // ── Harmony patch ─────────────────────────────────────────────────────────
