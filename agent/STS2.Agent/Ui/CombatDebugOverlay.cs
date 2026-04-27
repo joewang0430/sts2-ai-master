@@ -271,13 +271,13 @@ internal static class CombatDebugOverlay
             Creature           pc  = me.Creature;
             PlayerCombatState? pcs = me.PlayerCombatState;
 
-            sb.AppendLine($"── {me.Character.Id.Entry} ──────────────");
+            sb.AppendLine($"── {me.Character.Id.Entry}  T{state.RoundNumber} ──────────────");
             sb.AppendLine($"HP: {pc.CurrentHp}/{pc.MaxHp}  Block: {pc.Block}");
 
             if (pcs is not null)
             {
                 sb.AppendLine($"Energy: {pcs.Energy}/{pcs.MaxEnergy}  Stars: {pcs.Stars}");
-                sb.AppendLine($"Hand:{pcs.Hand.Cards.Count}  Draw:{pcs.DrawPile.Cards.Count}  Disc:{pcs.DiscardPile.Cards.Count}");
+                sb.AppendLine($"Hand:{pcs.Hand.Cards.Count}  Draw:{pcs.DrawPile.Cards.Count}  Disc:{pcs.DiscardPile.Cards.Count}  Exh:{pcs.ExhaustPile.Cards.Count}");
 
                 foreach (CardModel card in pcs.Hand.Cards)
                 {
