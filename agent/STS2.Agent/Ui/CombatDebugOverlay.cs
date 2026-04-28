@@ -16,6 +16,7 @@ using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rooms;
+using STS2.Agent.Sim;
 
 namespace STS2.Agent.Ui;
 
@@ -50,6 +51,8 @@ internal static class CombatDebugOverlay
     private static ColorRect? _bgRight;
     private static Label?     _labelPredict;
     private static ColorRect? _bgPredict;
+    private static Label?     _labelDmg;
+    private static ColorRect? _bgDmg;
     private static CombatState? _state;
 
     // ── Next-turn-hand prediction state ───────────────────────────────────────
@@ -171,6 +174,30 @@ internal static class CombatDebugOverlay
         room.AddChild(_bgPredict);
         room.AddChild(_labelPredict);
 
+        // ── Fifth column — Sim damage preview (VERIFY tool for SimDamage) ─────
+        // Layout note: the screen is typically 1280–1920 wide. We start at
+        // x=1004 (right after column 4 ends at 996) and use a 270 px wide panel,
+        // which fits comfortably on a 1280-wide window.
+        _bgDmg = new ColorRect
+        {
+            Color       = new Color(0f, 0f, 0f, 0.65f),
+            Position    = new Vector2(1004f, 8f),
+            Size        = new Vector2(270f, 480f),
+            ZIndex      = 99,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _labelDmg = new Label
+        {
+            Position     = new Vector2(1008f, 12f),
+            Size         = new Vector2(262f, 472f),
+            ZIndex       = 100,
+            MouseFilter  = Control.MouseFilterEnum.Ignore,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+        };
+        _labelDmg.AddThemeFontSizeOverride("font_size", 12);
+        room.AddChild(_bgDmg);
+        room.AddChild(_labelDmg);
+
         // ── Third column — potion selection ───────────────────────────────────
         // Parent the interactive widgets to a CanvasLayer so their input is
         // processed AFTER (i.e. ABOVE) every Control in the game's scene tree.
@@ -241,6 +268,8 @@ internal static class CombatDebugOverlay
         _bgRight             = null;
         _labelPredict        = null;
         _bgPredict           = null;
+        _labelDmg            = null;
+        _bgDmg               = null;
         _bgPotions           = null;
         _potionButtonBox     = null;
         _potionApprovedLabel = null;
@@ -270,6 +299,8 @@ internal static class CombatDebugOverlay
                 _labelRight.Text = string.Empty;
             if (_labelPredict is not null && GodotObject.IsInstanceValid(_labelPredict))
                 _labelPredict.Text = string.Empty;
+            if (_labelDmg is not null && GodotObject.IsInstanceValid(_labelDmg))
+                _labelDmg.Text = string.Empty;
             if (_potionApprovedLabel is not null && GodotObject.IsInstanceValid(_potionApprovedLabel))
                 _potionApprovedLabel.Text = string.Empty;
             return;
@@ -282,6 +313,8 @@ internal static class CombatDebugOverlay
                 _labelRight.Text = BuildRelicText(_state);
             if (_labelPredict is not null && GodotObject.IsInstanceValid(_labelPredict))
                 _labelPredict.Text = BuildPredictionText(_state);
+            if (_labelDmg is not null && GodotObject.IsInstanceValid(_labelDmg))
+                _labelDmg.Text = BuildDmgPreviewText(_state);
 
             // Detect divergence between our tracked potions and the live list:
             //   - CombatSetUp may fire before _Ready, or Player.Potions may be
@@ -442,6 +475,91 @@ internal static class CombatDebugOverlay
             }
         }
 
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Sim-layer damage prediction (VERIFY column). For every attack card in
+    /// hand, computes what <see cref="SimDamage.Compute"/> says the card would
+    /// hit each living enemy for. The user compares this against the in-game
+    /// tooltip to validate the formula.
+    ///
+    /// Hit count detection: STS2 multi-hit cards (Peck, Quadcast, BouncingFlask…)
+    /// expose a <c>Repeat</c> DynamicVar that holds the per-cast hit count.
+    /// Cards without it are assumed to hit once. Some special cards (e.g.
+    /// MadScience's "Violence" rider) encode hit count in card-specific vars
+    /// and are NOT detected here — those will need per-card data once they
+    /// enter the SimCardDb whitelist.
+    /// </summary>
+    private static string BuildDmgPreviewText(CombatState state)
+    {
+        var sb = new StringBuilder(256);
+        sb.AppendLine("── DMG PREVIEW ─────────");
+
+        Player? me = LocalContext.GetMe(state);
+        if (me?.PlayerCombatState is not { } pcs) return sb.ToString();
+
+        Creature dealer   = me.Creature;
+        int      strength = SimReader.Strength(dealer);
+        bool     dealerWk = SimReader.Weak(dealer);
+
+        sb.AppendLine($"Str:{strength}  Weak:{(dealerWk ? "Y" : "N")}");
+
+        var liveEnemies = state.Enemies.Where(e => e.IsAlive).ToList();
+        if (liveEnemies.Count == 0)
+        {
+            sb.AppendLine("(no enemies)");
+            return sb.ToString();
+        }
+
+        bool any = false;
+        foreach (CardModel card in pcs.Hand.Cards)
+        {
+            if (card.Type != CardType.Attack)                            continue;
+            if (!card.DynamicVars.TryGetValue("Damage", out var dv))     continue;
+            int rawDmg = (int)dv.BaseValue;
+
+            // Repeat var = total hit count (Peck=3, Quadcast=4, …). Cards without
+            // it hit once. See class doc above for the multi-hit caveat.
+            int hits = 1;
+            if (card.DynamicVars.TryGetValue("Repeat", out var rv))
+                hits = Math.Max(1, (int)rv.BaseValue);
+
+            any = true;
+            string hitsTag = hits > 1 ? $" ×{hits}" : string.Empty;
+            sb.AppendLine($"{card.Title} ({rawDmg}{hitsTag})");
+
+            foreach (Creature en in liveEnemies)
+            {
+                bool vuln       = SimReader.Vulnerable(en);
+                int  perHit     = SimDamage.Compute(rawDmg, strength, vuln, dealerWk);
+                int  totalRaw   = perHit * hits;
+                // Block applies once per hit (game subtracts block on each hit
+                // and updates remaining block between hits). Approximate here:
+                // first hit eats Block, subsequent hits hit naked HP.
+                int totalAfter = Math.Max(0, perHit - en.Block) + perHit * (hits - 1);
+
+                // Build a compact human-readable formula breakdown so the user
+                // can verify which branches fired without doing math in their
+                // head. Examples: "(8+1)×1.5×0.75=10", "(8+1)=9".
+                var formula = new StringBuilder(32);
+                formula.Append('(').Append(rawDmg);
+                if (strength != 0) formula.Append(strength >= 0 ? "+" : "").Append(strength);
+                formula.Append(')');
+                if (vuln)     formula.Append("×1.5");
+                if (dealerWk) formula.Append("×0.75");
+                formula.Append('=').Append(perHit);
+
+                string nameShort = en.Name;
+                string line      = hits > 1
+                    ? $"  {nameShort}: {formula}×{hits}={totalRaw}"
+                    : $"  {nameShort}: {formula}";
+                if (en.Block > 0) line += $" −blk{en.Block}={totalAfter}";
+                sb.AppendLine(line);
+            }
+        }
+
+        if (!any) sb.AppendLine("(no attack cards)");
         return sb.ToString();
     }
 
