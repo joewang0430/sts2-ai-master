@@ -12,7 +12,9 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.Entities.Potions;
+using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
+using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rooms;
 
 namespace STS2.Agent.Ui;
@@ -46,7 +48,24 @@ internal static class CombatDebugOverlay
     private static ColorRect? _bg;
     private static Label?     _labelRight;
     private static ColorRect? _bgRight;
+    private static Label?     _labelPredict;
+    private static ColorRect? _bgPredict;
     private static CombatState? _state;
+
+    // ── Next-turn-hand prediction state ───────────────────────────────────────
+    // The prediction is computed during every Refresh() for state.RoundNumber + 1.
+    // To verify it, we keep the prediction made in the *previous* Refresh and,
+    // when state.RoundNumber increments, freeze it alongside the new actual hand
+    // so the user can see a side-by-side diff.
+    private static List<string>? _liveFromLastRefresh;
+    private static int           _roundFromLastRefresh = -1;
+    private static List<string>? _frozenPrediction;
+    private static List<string>? _frozenActual;
+    private static int           _frozenForRound = -1;
+    // Peak hand count observed in the frozen round so far. The actual snapshot
+    // is updated whenever a new peak is reached, which naturally locks onto the
+    // post-draw state once the player starts playing cards (count drops).
+    private static int           _frozenActualPeakCount;
 
     // ── Potion-selection state ────────────────────────────────────────────────
     // _potionLayer: a dedicated CanvasLayer with a high Layer value. Children
@@ -130,6 +149,28 @@ internal static class CombatDebugOverlay
         room.AddChild(_bgRight);
         room.AddChild(_labelRight);
 
+        // ── Fourth column — next-turn hand prediction & verification ──────────
+        // No interactivity, so a plain ColorRect + Label suffices (no CanvasLayer).
+        _bgPredict = new ColorRect
+        {
+            Color       = new Color(0f, 0f, 0f, 0.65f),
+            Position    = new Vector2(776f, 8f),
+            Size        = new Vector2(220f, 480f),
+            ZIndex      = 99,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _labelPredict = new Label
+        {
+            Position     = new Vector2(780f, 12f),
+            Size         = new Vector2(212f, 472f),
+            ZIndex       = 100,
+            MouseFilter  = Control.MouseFilterEnum.Ignore,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+        };
+        _labelPredict.AddThemeFontSizeOverride("font_size", 12);
+        room.AddChild(_bgPredict);
+        room.AddChild(_labelPredict);
+
         // ── Third column — potion selection ───────────────────────────────────
         // Parent the interactive widgets to a CanvasLayer so their input is
         // processed AFTER (i.e. ABOVE) every Control in the game's scene tree.
@@ -198,6 +239,8 @@ internal static class CombatDebugOverlay
         _bg                  = null;
         _labelRight          = null;
         _bgRight             = null;
+        _labelPredict        = null;
+        _bgPredict           = null;
         _bgPotions           = null;
         _potionButtonBox     = null;
         _potionApprovedLabel = null;
@@ -205,6 +248,12 @@ internal static class CombatDebugOverlay
         _allowedPotionIds.Clear();
         _potionButtons.Clear();
         _potionTitles.Clear();
+        _liveFromLastRefresh   = null;
+        _roundFromLastRefresh  = -1;
+        _frozenPrediction      = null;
+        _frozenActual          = null;
+        _frozenForRound        = -1;
+        _frozenActualPeakCount = 0;
         // The actual Godot nodes are freed automatically when the scene unloads.
     }
 
@@ -219,6 +268,8 @@ internal static class CombatDebugOverlay
             _label.Text = string.Empty;
             if (_labelRight is not null && GodotObject.IsInstanceValid(_labelRight))
                 _labelRight.Text = string.Empty;
+            if (_labelPredict is not null && GodotObject.IsInstanceValid(_labelPredict))
+                _labelPredict.Text = string.Empty;
             if (_potionApprovedLabel is not null && GodotObject.IsInstanceValid(_potionApprovedLabel))
                 _potionApprovedLabel.Text = string.Empty;
             return;
@@ -229,6 +280,8 @@ internal static class CombatDebugOverlay
             _label.Text = BuildMainText(_state);
             if (_labelRight is not null && GodotObject.IsInstanceValid(_labelRight))
                 _labelRight.Text = BuildRelicText(_state);
+            if (_labelPredict is not null && GodotObject.IsInstanceValid(_labelPredict))
+                _labelPredict.Text = BuildPredictionText(_state);
 
             // Detect divergence between our tracked potions and the live list:
             //   - CombatSetUp may fire before _Ready, or Player.Potions may be
@@ -406,6 +459,153 @@ internal static class CombatDebugOverlay
                                relic.Status == MegaCrit.Sts2.Core.Entities.Relics.RelicStatus.Disabled ? " !" : "";
             sb.AppendLine($"{relic.Id.Entry}{statusTag}");
         }
+        return sb.ToString();
+    }
+
+    // ── Next-turn prediction (V0) ─────────────────────────────────────────────
+    //
+    // V0 deliberately ignores all Hooks (ModifyHandDraw, ModifyShuffleOrder, ...).
+    // The point is to use the diff against reality to discover which hooks must
+    // eventually be modeled. The simulation only does what we can prove from
+    // first principles by reading the game source:
+    //
+    //   1. End of player turn:
+    //        non-Retain non-Ethereal hand cards → DiscardPile
+    //        Ethereal hand cards               → ExhaustPile (irrelevant for draw)
+    //        Retain hand cards                 → stay in hand for next turn
+    //   2. Start of next turn: draw 5 cards (hardcoded V0).
+    //   3. If DrawPile empties mid-draw, replicate `CardPileCmd.Shuffle`:
+    //        - all DiscardPile cards become the new DrawPile
+    //        - StableShuffle = list.Sort() + list.UnstableShuffle(rng)
+    //        - the rng we use is a clone of `Player.RunState.Rng.Shuffle`
+    //          via `new Rng(seed, counter)`.
+    //
+    // The clone preserves the exact System.Random state, so future NextInt()
+    // calls produce the same sequence as the live game would.
+
+    private static List<CardModel> ComputePredictedHand(CombatState state, out int handDrawCount)
+    {
+        handDrawCount = 5; // V0
+        Player? me = LocalContext.GetMe(state);
+        if (me?.PlayerCombatState is not { } pcs) return new List<CardModel>();
+
+        // Cards that survive turn-end into the next turn's hand.
+        var retained  = pcs.Hand.Cards.Where(c => c.ShouldRetainThisTurn).ToList();
+        var toDiscard = pcs.Hand.Cards
+            .Where(c => !c.ShouldRetainThisTurn && !c.Keywords.Contains(CardKeyword.Ethereal))
+            .ToList();
+
+        var simDraw    = pcs.DrawPile.Cards.ToList();
+        var simDiscard = pcs.DiscardPile.Cards.ToList();
+        simDiscard.AddRange(toDiscard);
+
+        // Snapshot the RNG state so we don't disturb the live game.
+        Rng liveRng = me.RunState.Rng.Shuffle;
+        var simRng  = new Rng(liveRng.Seed, liveRng.Counter);
+
+        var result = new List<CardModel>(retained);
+        int needed = Math.Max(0, handDrawCount - retained.Count);
+
+        for (int i = 0; i < needed; i++)
+        {
+            if (simDraw.Count == 0)
+            {
+                if (simDiscard.Count == 0) break;
+                // Replicate ListExtensions.StableShuffle without its
+                // `T : IComparable<T>` constraint (CardModel only implements
+                // IComparable<AbstractModel>). The algorithm is identical:
+                // canonicalize order via Sort, then Fisher-Yates with the rng.
+                simDiscard.Sort((a, b) => a.CompareTo(b));
+                simDiscard.UnstableShuffle(simRng);
+                simDraw    = simDiscard;
+                simDiscard = new List<CardModel>();
+            }
+            result.Add(simDraw[0]);
+            simDraw.RemoveAt(0);
+        }
+        return result;
+    }
+
+    /// <summary>Compact one-line label per card: "Strike" or "Strike[+]".</summary>
+    private static string CardLabel(CardModel c) => c.IsUpgraded ? $"{c.Title}[+]" : c.Title;
+
+    private static string BuildPredictionText(CombatState state)
+    {
+        var sb = new StringBuilder(512);
+
+        Player? me = LocalContext.GetMe(state);
+        if (me?.PlayerCombatState is null)
+            return string.Empty;
+
+        // ── Round-change detection (decoupled two-stage) ─────────────────────
+        // Stage 1: the frame RoundNumber increments, lock in the prediction
+        //          built at the end of the previous round and reset the
+        //          actual-capture peak tracker.
+        if (_roundFromLastRefresh > 0
+            && state.RoundNumber > _roundFromLastRefresh
+            && _liveFromLastRefresh is not null)
+        {
+            _frozenPrediction      = _liveFromLastRefresh;
+            _frozenForRound        = state.RoundNumber;
+            _frozenActual          = null;
+            _frozenActualPeakCount = 0;
+        }
+
+        // Stage 2: monotonic peak tracking. Drawing happens card-by-card across
+        //          many _Process frames, so the hand grows 0 → 1 → 2 → … → N.
+        //          Once the player plays a card, count drops and we stop
+        //          updating, which locks the snapshot at the post-draw state.
+        //          This is independent of the prediction in every way.
+        if (_frozenForRound == state.RoundNumber
+            && me.PlayerCombatState is { } pcsCapture
+            && pcsCapture.Hand.Cards.Count > _frozenActualPeakCount)
+        {
+            _frozenActual          = pcsCapture.Hand.Cards.Select(CardLabel).ToList();
+            _frozenActualPeakCount = pcsCapture.Hand.Cards.Count;
+        }
+
+        // Compute fresh prediction for the *next* turn.
+        var predicted = ComputePredictedHand(state, out int drawCount);
+        var liveLabels = predicted.Select(CardLabel).ToList();
+
+        Rng rng = me.RunState.Rng.Shuffle;
+        sb.AppendLine($"── PREDICT T{state.RoundNumber + 1} ──");
+        sb.AppendLine($" rng s:{rng.Seed} c:{rng.Counter}");
+        int retainedCount = predicted.Count > 0
+            ? predicted.TakeWhile(c => c.ShouldRetainThisTurn).Count()
+            : 0;
+        sb.AppendLine($" retain:{retainedCount} draw:{drawCount - retainedCount}");
+        sb.AppendLine();
+        for (int i = 0; i < liveLabels.Count; i++)
+        {
+            string mark = i < retainedCount ? "[R]" : "   ";
+            sb.AppendLine($" {mark} {liveLabels[i]}");
+        }
+
+        // ── Verification block ────────────────────────────────────────────────
+        if (_frozenPrediction is not null && _frozenActual is not null)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"── VERIFY T{_frozenForRound} ──");
+            int max = Math.Max(_frozenPrediction.Count, _frozenActual.Count);
+            int hits = 0;
+            for (int i = 0; i < max; i++)
+            {
+                string p = i < _frozenPrediction.Count ? _frozenPrediction[i] : "(none)";
+                string a = i < _frozenActual.Count     ? _frozenActual[i]     : "(none)";
+                bool ok = p == a;
+                if (ok) hits++;
+                sb.AppendLine(ok ? $" v {p}" : $" x {p}");
+                if (!ok) sb.AppendLine($"   -> {a}");
+            }
+            sb.AppendLine();
+            sb.AppendLine($" {hits}/{max} match");
+        }
+
+        // Cache for next refresh's round-change detection.
+        _liveFromLastRefresh  = liveLabels;
+        _roundFromLastRefresh = state.RoundNumber;
+
         return sb.ToString();
     }
 
