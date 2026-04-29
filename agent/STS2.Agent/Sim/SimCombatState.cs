@@ -22,8 +22,8 @@ namespace STS2.Agent.Sim;
 ///     row-major. <c>sbyte</c> because layer counts fit in [-128, 127] (Strength can go
 ///     negative via Strength-Down; Poison/Strength rarely exceed ~100). Jagged arrays
 ///     would cost an extra pointer dereference per access; the flat form keeps every
-///     creature's 200-byte power vector contiguous (~3 cache lines) and the whole
-///     6-creature matrix in 1200 B (~19 cache lines, fits within L1 dcache).
+///     creature's 259-byte power vector contiguous (5 cache lines) and the whole
+///     6-creature matrix in 1554 B (25 cache lines, fits within L1 dcache).
 ///   • Card-id piles are <c>ushort[]</c> because the game has 577 card classes
 ///     (counted in MegaCrit.Sts2.Core.Models.Cards as of 2026-04) — byte's 256-value
 ///     range is too small.
@@ -32,7 +32,7 @@ namespace STS2.Agent.Sim;
 ///   <see cref="EnemyCap"/>     = 6   (max EncounterModel.Slots count across all encounters)
 ///   <see cref="HandCap"/>      = 10  (mirrors CardPile.maxCardsInHand)
 ///   <see cref="PileCap"/>      = 200 (empirical ceiling for draw/disc/exhaust each)
-///   <see cref="PowersPerCre"/> = 200 (one slot per game PowerModel subclass)
+///   <see cref="PowersPerCre"/> = 259 (one slot per concrete PowerModel subclass)
 /// Exceeding any cap is a programmer error and asserts via index out-of-range.
 /// </summary>
 internal sealed class SimCombatState
@@ -59,10 +59,13 @@ internal sealed class SimCombatState
     //   builds common, edit this constant manually.
     public const int PileCap      = 200;
 
-    // PowersPerCre: Mirrors SimPowerType.Count = 200, which equals the number of PowerModel
-    //   subclasses in the game (counted at 2026-04). Each slot stores a layer count as
-    //   sbyte. Storage: 6 creatures * 200 B = 1200 B, ~3 cache lines per creature.
-    public const int PowersPerCre = SimPowerType.Count;   // 200
+    // PowersPerCre: Mirrors SimPowerType.Count = 259, exactly one slot per concrete
+    //   PowerModel subclass in the game (verified 2026-04). Each slot stores a layer
+    //   count as sbyte. Storage: 6 creatures * 259 B = 1554 B, ~25 cache lines, all
+    //   in L1d. If a future game patch adds a new PowerModel subclass, both this
+    //   constant and SimPowerRegistry must be updated together (the registry's
+    //   typeof() entries will fail to compile, which is the intended canary).
+    public const int PowersPerCre = SimPowerType.Count;   // 259
 
     // ── Turn / timing ─────────────────────────────────────────────────────────
     public byte Round;
