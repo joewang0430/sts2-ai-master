@@ -6,27 +6,35 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Hot data for one combat node. Designed for thousands of clones per second
-/// during DFS / MCTS:
+/// during DFS:
 ///
 ///   • Pure value-type fields. No reference to any game object (CardModel,
-///     Creature, PowerModel). Cards are int <c>CardId</c>s; behavior lives
-///     in <see cref="SimCardDb"/>.
-///   • All variable-length data uses fixed-capacity <c>int[]</c> + count
-///     instead of <c>List&lt;int&gt;</c>. Reasons:
+///     Creature, PowerModel). Cards are <c>ushort</c>s; behavior lives in
+///     <see cref="SimCardDb"/>.
+///   • Card id encoding (ushort): bit 15 = upgrade flag (0 = base, 1 = +1),
+///     bits 0–14 = the alphabetic id from <see cref="SimCardId"/> (current
+///     range 0–576, hard cap 32767). STS2 today caps every card at
+///     <c>MaxUpgradeLevel == 1</c> (verified by SimCaps.Verify at startup);
+///     a future patch adding multi-level upgrades will trip the assert.
+///   • All variable-length data uses fixed-capacity arrays + count instead of
+///     <c>List&lt;T&gt;</c>. Reasons:
 ///       – No bounds-check thunk through a property getter (List.Count is
 ///         a property; array.Length is a single ldlen).
 ///       – No hidden internal array swap on Add (List uses _items field).
-///       – Lets Clone() use <see cref="Array.Copy"/> which compiles down to
+///       – Lets CopyFrom use <see cref="Array.Copy"/> which compiles down to
 ///         a vectorized memmove.
-///   • Per-creature powers are stored in a single flat <c>sbyte[EnemyCap * PowersPerCre]</c>
-///     row-major. <c>sbyte</c> because layer counts fit in [-128, 127] (Strength can go
-///     negative via Strength-Down; Poison/Strength rarely exceed ~100). Jagged arrays
-///     would cost an extra pointer dereference per access; the flat form keeps every
-///     creature's 259-byte power vector contiguous (5 cache lines) and the whole
-///     6-creature matrix in 1554 B (25 cache lines, fits within L1 dcache).
+///   • Per-creature powers are stored in a single flat <c>short[EnemyCap * PowersPerCre]</c>
+///     row-major. <c>short</c> (not sbyte) because Poison / Strength / Dex / Thorns /
+///     RollingBoulder routinely exceed sbyte's 127 cap in real builds. short fits
+///     [-32768, 32767] which exceeds any conceivable in-game stack. Storage:
+///     6 creatures × 259 × 2 B = 3108 B (49 cache lines), still in L1d. Jagged
+///     arrays would cost an extra pointer dereference per access; the flat form
+///     keeps every creature's 518-byte power vector contiguous.
+///   • RNG state is a 228-byte unsafe struct mirroring System.Random's internal
+///     56-int Knuth subtractive state, so cloning is a single memcpy with zero
+///     heap allocation and full bit-exact reproduction of the game's shuffle.
 ///   • Card-id piles are <c>ushort[]</c> because the game has 577 card classes
-///     (counted in MegaCrit.Sts2.Core.Models.Cards as of 2026-04) — byte's 256-value
-///     range is too small.
+///     plus the upgrade flag bit; byte's 256-value range is too small.
 ///
 /// Capacities (compile-time constants — see field doc-comments for rationale):
 ///   <see cref="EnemyCap"/>     = 6   (max EncounterModel.Slots count across all encounters)
@@ -61,8 +69,8 @@ internal sealed class SimCombatState
 
     // PowersPerCre: Mirrors SimPowerType.Count = 259, exactly one slot per concrete
     //   PowerModel subclass in the game (verified 2026-04). Each slot stores a layer
-    //   count as sbyte. Storage: 6 creatures * 259 B = 1554 B, ~25 cache lines, all
-    //   in L1d. If a future game patch adds a new PowerModel subclass, both this
+    //   count as short. Storage: 6 creatures * 259 * 2 B = 3108 B, ~49 cache lines,
+    //   all in L1d. If a future game patch adds a new PowerModel subclass, both this
     //   constant and SimPowerRegistry must be updated together (the registry's
     //   typeof() entries will fail to compile, which is the intended canary).
     public const int PowersPerCre = SimPowerType.Count;   // 259
@@ -78,42 +86,55 @@ internal sealed class SimCombatState
     public ushort Energy;
     public ushort MaxEnergy;
 
-    /// <summary>Indexed by SimPowerType.*. Layer count (sbyte: signed for Strength-Down etc.).</summary>
-    public readonly sbyte[] PlayerPowers = new sbyte[PowersPerCre];
+    /// <summary>
+    /// Indexed by SimPowerType.*. Layer count as short: signed for Strength-Down
+    /// (negative Strength) and wide enough for Poison / Thorns / RollingBoulder
+    /// stacking far beyond sbyte's 127 cap.
+    /// </summary>
+    public readonly short[] PlayerPowers = new short[PowersPerCre];
 
     // ── Enemies (parallel arrays of length EnemyCap; valid range [0, EnemyCount)) ─
     public int EnemyCount;
     public readonly ushort[] EnemyHp         = new ushort[EnemyCap]; // 0..65535; boss HP well below
     public readonly ushort[] EnemyMaxHp      = new ushort[EnemyCap];
     public readonly ushort[] EnemyBlock      = new ushort[EnemyCap];
-    public readonly ushort[] EnemyIntentDmg  = new ushort[EnemyCap]; // 0..~500
+    public readonly ushort[] EnemyIntentDmg  = new ushort[EnemyCap]; // base damage from intent.DamageCalc(); Str/Vuln/Weak applied at sim time
     public readonly byte[]   EnemyIntentHits = new byte[EnemyCap];   // 0..~20
+
+    /// <summary>
+    /// Per-enemy intent kind (cast of <see cref="SimIntent"/>). Distinguishes
+    /// Attack / Defend / Buff / Debuff / Heal / etc. <see cref="EnemyIntentDmg"/>
+    /// and <see cref="EnemyIntentHits"/> are only meaningful when this is
+    /// <c>SimIntent.Attack</c> or <c>SimIntent.DeathBlow</c>. Other intent kinds
+    /// (block amount / buff stacks / etc.) are not yet captured — see SimIntent
+    /// docs for the staged plan.
+    /// </summary>
+    public readonly byte[] EnemyIntent = new byte[EnemyCap];
 
     /// <summary>
     /// Flat row-major power matrix. Enemy <c>i</c>'s power <c>p</c> is at
     /// <c>EnemyPowers[i * PowersPerCre + p]</c>. Use <see cref="EnemyPower"/>
     /// for typed access (the JIT inlines it).
     /// </summary>
-    public readonly sbyte[] EnemyPowers = new sbyte[EnemyCap * PowersPerCre];
+    public readonly short[] EnemyPowers = new short[EnemyCap * PowersPerCre];
 
     // ── Card piles (CardId ushorts; behavior in SimCardDb) ──────────────────────────
-    // ushort: game has 577 card classes; byte (256) is too small.
+    // ushort: 15-bit id + upgrade flag in bit 15; byte (256) is too small.
     // *Count stays int because loop bounds are JIT-friendlier as int.
     public readonly ushort[] Hand    = new ushort[HandCap];   public int HandCount;
     public readonly ushort[] Draw    = new ushort[PileCap];   public int DrawCount;
     public readonly ushort[] Disc    = new ushort[PileCap];   public int DiscCount;
     public readonly ushort[] Exhaust = new ushort[PileCap];   public int ExhaustCount;
 
-    // ── RNG (cloned from real game's Rng.Shuffle) ─────────────────────────────
-    public uint RngSeed;
-    public int  RngCounter;
+    // ── RNG (bit-exact mirror of game's System.Random; cloned by struct copy) ─
+    public RandomState RngState;
 
     // ── Typed accessors (JIT-inlined: same codegen as raw indexing) ───────────
 
     /// <summary>By-ref access to enemy <paramref name="idx"/>'s power slot.
     /// Use as: <c>state.EnemyPower(0, SimPowerType.Vulnerable) += 2;</c></summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ref sbyte EnemyPower(int idx, int type)
+    public ref short EnemyPower(int idx, int type)
         => ref EnemyPowers[idx * PowersPerCre + type];
 
     // ── Clone / reset ─────────────────────────────────────────────────────────
@@ -140,10 +161,11 @@ internal sealed class SimCombatState
         DrawCount     = src.DrawCount;
         DiscCount     = src.DiscCount;
         ExhaustCount  = src.ExhaustCount;
-        RngSeed       = src.RngSeed;
-        RngCounter    = src.RngCounter;
 
-        // Fixed-length player power vector — full copy (200 sbytes = 200 B, ~3 cache lines).
+        // RNG state: 228-byte struct copy (single memcpy, no allocation).
+        RngState = src.RngState;
+
+        // Fixed-length player power vector — full copy (259 shorts = 518 B).
         Array.Copy(src.PlayerPowers, PlayerPowers, PowersPerCre);
 
         // Enemy parallel arrays: only copy the valid prefix.
@@ -155,7 +177,8 @@ internal sealed class SimCombatState
             Array.Copy(src.EnemyBlock,      EnemyBlock,      n);
             Array.Copy(src.EnemyIntentDmg,  EnemyIntentDmg,  n);
             Array.Copy(src.EnemyIntentHits, EnemyIntentHits, n);
-            // Flat power matrix: copy n rows of PowersPerCre ints contiguously.
+            Array.Copy(src.EnemyIntent,     EnemyIntent,     n);
+            // Flat power matrix: copy n rows of PowersPerCre shorts contiguously.
             Array.Copy(src.EnemyPowers, EnemyPowers, n * PowersPerCre);
         }
 
@@ -167,10 +190,11 @@ internal sealed class SimCombatState
     }
 
     /// <summary>
-    /// Zero counts, the player-power vector, and ALL enemy-power rows. Used by
-    /// <c>FromReal</c> at the start of a fresh snapshot, and by the state pool
-    /// when recycling. Pile arrays past the (now-zero) counts are unreachable,
-    /// so we deliberately do not Array.Clear them.
+    /// Zero counts, the player-power vector, all enemy-power rows, the enemy
+    /// intent vector, and the RNG state. Used by <c>Snapshot</c> at the start
+    /// of a fresh capture, and by the state pool when recycling. Pile arrays
+    /// past the (now-zero) counts are unreachable, so we deliberately do not
+    /// Array.Clear them.
     /// </summary>
     public void Reset()
     {
@@ -179,9 +203,9 @@ internal sealed class SimCombatState
         Energy = MaxEnergy = 0;
         EnemyCount = 0;
         HandCount = DrawCount = DiscCount = ExhaustCount = 0;
-        RngSeed = 0;
-        RngCounter = 0;
+        RngState = default;
         Array.Clear(PlayerPowers, 0, PowersPerCre);
         Array.Clear(EnemyPowers,  0, EnemyCap * PowersPerCre);
+        Array.Clear(EnemyIntent,  0, EnemyCap);
     }
 }
