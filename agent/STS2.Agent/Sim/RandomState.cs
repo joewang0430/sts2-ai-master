@@ -1,8 +1,62 @@
 using System;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using MegaCrit.Sts2.Core.Random;
 
 namespace STS2.Agent.Sim;
+
+/// <summary>
+/// Identifies one of the per-combat RNG streams owned by the game's
+/// <c>RunRngSet</c>. Used to index into <see cref="RandomStateBuffer"/>.
+///
+/// The game has 12 streams; we only mirror the 8 that can fire DURING a
+/// combat (the other 4 — UpFront / UnknownMapPoint / CombatPotionGeneration
+/// / TreasureRoomRelics — only consume randomness in map / reward screens).
+///
+/// Values are explicit, dense, and start at 0 so they double as array
+/// indices. <see cref="Count"/> is the buffer length and must stay in sync
+/// with <see cref="RandomStateBuffer"/>'s [InlineArray] attribute.
+/// </summary>
+internal enum SimRngSlot : int
+{
+    /// <summary>RunRngSet.Shuffle — discard→draw reshuffles, draw order. Highest DFS impact.</summary>
+    Shuffle              = 0,
+    /// <summary>RunRngSet.CombatTargets — random-target attacks (e.g. Sword Boomerang).</summary>
+    CombatTargets        = 1,
+    /// <summary>RunRngSet.CombatCardGeneration — Havoc / random-card effects.</summary>
+    CombatCardGeneration = 2,
+    /// <summary>RunRngSet.CombatCardSelection — Calculated Gamble etc.</summary>
+    CombatCardSelection  = 3,
+    /// <summary>RunRngSet.CombatEnergyCosts — random energy-cost cards (rare).</summary>
+    CombatEnergyCosts    = 4,
+    /// <summary>RunRngSet.CombatOrbGeneration — random orb generation (Defender).</summary>
+    CombatOrbGeneration  = 5,
+    /// <summary>RunRngSet.MonsterAi — monsters' next-move selection.</summary>
+    MonsterAi            = 6,
+    /// <summary>RunRngSet.Niche — edge-case effects.</summary>
+    Niche                = 7,
+
+    /// <summary>Total slot count. Must match RandomStateBuffer's [InlineArray(N)].</summary>
+    Count                = 8,
+}
+
+/// <summary>
+/// Inline 8-element buffer of <see cref="RandomState"/>. Sized via
+/// <see cref="InlineArrayAttribute"/> so the entire 8 × 228 = 1824-byte
+/// array lives directly inside <see cref="SimCombatState"/> with zero heap
+/// indirection. Indexed with <see cref="SimRngSlot"/>:
+/// <c>ref RandomState s = ref state.Rngs[(int)SimRngSlot.Shuffle];</c>
+///
+/// Only <see cref="SimRngSlot.Shuffle"/> is captured today (Day-2
+/// implementation); the other 7 slots stay zero-default until the rest of
+/// the streams are wired up. CopyFrom does a single struct-assign that
+/// copies all 8 in one memcpy regardless of which are populated.
+/// </summary>
+[System.Runtime.CompilerServices.InlineArray((int)SimRngSlot.Count)]
+internal struct RandomStateBuffer
+{
+    private RandomState _element0;
+}
 
 /// <summary>
 /// Bit-exact mirror of <see cref="System.Random"/>'s internal Knuth-subtractive
@@ -50,6 +104,9 @@ internal static unsafe class RandomStateOps
     private static readonly FieldInfo F_inext;
     private static readonly FieldInfo F_inextp;
 
+    /// <summary>Path from game's <see cref="Rng"/> wrapper down to its private System.Random.</summary>
+    private static readonly FieldInfo F_rngRandom;
+
     static RandomStateOps()
     {
         const BindingFlags BF = BindingFlags.NonPublic | BindingFlags.Instance;
@@ -67,6 +124,9 @@ internal static unsafe class RandomStateOps
         F_seedArr = prngT.GetField("_seedArray", BF) ?? throw Err($"{prngT.FullName}._seedArray");
         F_inext   = prngT.GetField("_inext",     BF) ?? throw Err($"{prngT.FullName}._inext");
         F_inextp  = prngT.GetField("_inextp",    BF) ?? throw Err($"{prngT.FullName}._inextp");
+
+        F_rngRandom = typeof(Rng).GetField("_random", BF)
+            ?? throw Err("MegaCrit.Sts2.Core.Random.Rng._random");
     }
 
     private static InvalidOperationException Err(string field) => new(
@@ -96,6 +156,18 @@ internal static unsafe class RandomStateOps
         }
         dst.INext  = (int)F_inext.GetValue(prng)!;
         dst.INextp = (int)F_inextp.GetValue(prng)!;
+    }
+
+    /// <summary>
+    /// Convenience: capture the underlying <see cref="System.Random"/> out of
+    /// the game's <see cref="Rng"/> wrapper. One reflection hop (cached) +
+    /// the same Knuth-state copy as <see cref="Capture(System.Random, ref RandomState)"/>.
+    /// </summary>
+    public static void CaptureFromRng(Rng src, ref RandomState dst)
+    {
+        var sysRandom = (System.Random?)F_rngRandom.GetValue(src)
+            ?? throw new InvalidOperationException("Rng._random is null.");
+        Capture(sysRandom, ref dst);
     }
 
     /// <summary>

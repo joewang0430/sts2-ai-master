@@ -43,7 +43,7 @@ namespace STS2.Agent.Sim;
 ///   <see cref="PowersPerCre"/> = 259 (one slot per concrete PowerModel subclass)
 /// Exceeding any cap is a programmer error and asserts via index out-of-range.
 /// </summary>
-internal sealed class SimCombatState
+internal sealed partial class SimCombatState
 {
     // ── Capacity constants ────────────────────────────────────────────────────
     // EnemyCap: No central constant in game source. Bounded by EncounterModel.Slots
@@ -126,8 +126,17 @@ internal sealed class SimCombatState
     public readonly ushort[] Disc    = new ushort[PileCap];   public int DiscCount;
     public readonly ushort[] Exhaust = new ushort[PileCap];   public int ExhaustCount;
 
-    // ── RNG (bit-exact mirror of game's System.Random; cloned by struct copy) ─
-    public RandomState RngState;
+    // ── RNG (bit-exact mirrors of the game's per-stream System.Random instances) ─
+    // 8 inline slots, indexed by SimRngSlot. Today only Slot 0 (Shuffle) is
+    // populated by Snapshot; the other 7 will be wired in once their consuming
+    // card / power effects land in the sim. CopyFrom uses a single struct
+    // assignment which memcpy's all 8 in one shot regardless of which are live.
+    public RandomStateBuffer Rngs;
+
+    /// <summary>By-ref access to one RNG stream's mutable Knuth state.
+    /// Use as: <c>RandomStateOps.Next(ref state.Rng(SimRngSlot.Shuffle), 5);</c></summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ref RandomState Rng(SimRngSlot slot) => ref Rngs[(int)slot];
 
     // ── Typed accessors (JIT-inlined: same codegen as raw indexing) ───────────
 
@@ -162,8 +171,8 @@ internal sealed class SimCombatState
         DiscCount     = src.DiscCount;
         ExhaustCount  = src.ExhaustCount;
 
-        // RNG state: 228-byte struct copy (single memcpy, no allocation).
-        RngState = src.RngState;
+        // RNG state: 8 × 228 = 1824-byte struct copy (single memcpy, no allocation).
+        Rngs = src.Rngs;
 
         // Fixed-length player power vector — full copy (259 shorts = 518 B).
         Array.Copy(src.PlayerPowers, PlayerPowers, PowersPerCre);
@@ -203,7 +212,7 @@ internal sealed class SimCombatState
         Energy = MaxEnergy = 0;
         EnemyCount = 0;
         HandCount = DrawCount = DiscCount = ExhaustCount = 0;
-        RngState = default;
+        Rngs = default;
         Array.Clear(PlayerPowers, 0, PowersPerCre);
         Array.Clear(EnemyPowers,  0, EnemyCap * PowersPerCre);
         Array.Clear(EnemyIntent,  0, EnemyCap);
