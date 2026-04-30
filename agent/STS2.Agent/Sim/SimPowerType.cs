@@ -3,7 +3,15 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Compile-time integer indices for every PowerModel subclass in the game.
 /// Indices are dense [0, Count) and stored in <see cref="SimCombatState"/>'s
-/// per-creature <c>sbyte[Count]</c> power vectors.
+/// per-creature <c>short[Count]</c> power vectors.
+///
+/// Hot-path callers reference these as compile-time constants — e.g.
+/// <c>state.PlayerPowers[SimPowerType.Strength]</c> resolves to a single
+/// <c>movsx</c> at index 222 with no dictionary lookup. The whole table is
+/// flat <c>public const int</c> so every power is equally cheap; "high
+/// frequency" powers (Strength / Dexterity / Vulnerable / Weak / Poison /
+/// Thorns / RollingBoulder) are not special-cased — they're just regular
+/// entries in the alphabetic order.
 ///
 /// Hand-maintained (not generated): if the game adds, removes, or renames a
 /// PowerModel subclass, this file AND <see cref="SimPowerRegistry"/> must be
@@ -13,8 +21,8 @@ namespace STS2.Agent.Sim;
 /// Index assignment: ordinal sort of class names (after stripping the "Power"
 /// suffix). Stable across mod rebuilds for the same game version.
 ///
-/// Storage cost per creature = Count bytes = 259 B (≈4 cache lines).
-/// 7 creatures = 1813 B, fits L1d easily.
+/// Storage cost per creature = Count * 2 B = 518 B (≈9 cache lines).
+/// 6 creatures = 3108 B, fits L1d (49/512 lines on a typical 32 KiB L1d).
 /// </summary>
 internal static class SimPowerType
 {
