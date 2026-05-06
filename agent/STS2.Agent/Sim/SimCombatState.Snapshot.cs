@@ -100,11 +100,19 @@ internal sealed partial class SimCombatState
             CaptureIntent(e, i);
         }
 
-        // 8) RNG: capture only the Shuffle stream today; the other 7 slots
-        //    in Rngs stay zero-default until their consuming effects are
-        //    implemented in the sim.
+        // 8) RNG: capture all 8 in-combat streams. Each is a separate
+        //    System.Random behind the game's Rng wrapper; the captured Knuth
+        //    state lets the DFS engine replay every roll bit-exact without
+        //    touching the live game RNG. Slot order matches SimRngSlot.
         var rngSet = combat.RunState.Rng;
-        RandomStateOps.CaptureFromRng(rngSet.Shuffle, ref Rng(SimRngSlot.Shuffle));
+        RandomStateOps.CaptureFromRng(rngSet.Shuffle,              ref Rng(SimRngSlot.Shuffle));
+        RandomStateOps.CaptureFromRng(rngSet.CombatTargets,        ref Rng(SimRngSlot.CombatTargets));
+        RandomStateOps.CaptureFromRng(rngSet.CombatCardGeneration, ref Rng(SimRngSlot.CombatCardGeneration));
+        RandomStateOps.CaptureFromRng(rngSet.CombatCardSelection,  ref Rng(SimRngSlot.CombatCardSelection));
+        RandomStateOps.CaptureFromRng(rngSet.CombatEnergyCosts,    ref Rng(SimRngSlot.CombatEnergyCosts));
+        RandomStateOps.CaptureFromRng(rngSet.CombatOrbGeneration,  ref Rng(SimRngSlot.CombatOrbGeneration));
+        RandomStateOps.CaptureFromRng(rngSet.MonsterAi,            ref Rng(SimRngSlot.MonsterAi));
+        RandomStateOps.CaptureFromRng(rngSet.Niche,                ref Rng(SimRngSlot.Niche));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

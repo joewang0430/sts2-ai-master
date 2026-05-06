@@ -53,16 +53,19 @@ internal static class SimCaps
         }
 
         // ── 2. Every encounter must fit in EnemyCap=6 monster slots.
+        //    Use EncounterModel.Slots (static design data, safe on canonical
+        //    models). MonstersWithSlots is run-time only — it asserts mutable
+        //    and would throw CanonicalModelException here.
         int worstSlots = 0;
         EncounterModel? worstEncounter = null;
         foreach (EncounterModel enc in ModelDb.AllEncounters)
         {
-            int n = enc.MonstersWithSlots.Count;
+            int n = enc.Slots.Count;
             if (n > worstSlots) { worstSlots = n; worstEncounter = enc; }
             if (n > SimCombatState.EnemyCap)
             {
                 throw new InvalidOperationException(
-                    $"SimCaps: encounter '{enc.Id}' has {n} monsters but " +
+                    $"SimCaps: encounter '{enc.Id}' has {n} slots but " +
                     $"SimCombatState.EnemyCap={SimCombatState.EnemyCap}. Raise EnemyCap.");
             }
         }
@@ -83,10 +86,14 @@ internal static class SimCaps
         // ── 4. Every concrete PowerModel must be registered in SimPowerRegistry.
         //    EnemyPowers / PlayerPowers are dense short[259] arrays; an unknown
         //    power type would have nowhere to land during snapshot.
+        //    Mock* powers under *.Powers.Mocks are unit-test fixtures registered
+        //    into ModelDb but never instantiated in real combat — skip them.
         List<string>? missing = null;
         foreach (PowerModel pwr in ModelDb.AllPowers)
         {
             Type t = pwr.GetType();
+            string? ns = t.Namespace;
+            if (ns != null && ns.EndsWith(".Powers.Mocks", StringComparison.Ordinal)) continue;
             if (!SimPowerRegistry.TryGetIndex(t, out _))
             {
                 missing ??= new List<string>();

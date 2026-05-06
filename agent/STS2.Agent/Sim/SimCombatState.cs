@@ -127,10 +127,9 @@ internal sealed partial class SimCombatState
     public readonly ushort[] Exhaust = new ushort[PileCap];   public int ExhaustCount;
 
     // ── RNG (bit-exact mirrors of the game's per-stream System.Random instances) ─
-    // 8 inline slots, indexed by SimRngSlot. Today only Slot 0 (Shuffle) is
-    // populated by Snapshot; the other 7 will be wired in once their consuming
-    // card / power effects land in the sim. CopyFrom uses a single struct
-    // assignment which memcpy's all 8 in one shot regardless of which are live.
+    // 8 inline slots, indexed by SimRngSlot. Snapshot fills all 8; CopyFrom
+    // uses a single struct assignment that memcpy's the entire 1824-byte
+    // buffer in one shot.
     public RandomStateBuffer Rngs;
 
     /// <summary>By-ref access to one RNG stream's mutable Knuth state.

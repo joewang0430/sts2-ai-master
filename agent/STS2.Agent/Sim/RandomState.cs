@@ -47,10 +47,9 @@ internal enum SimRngSlot : int
 /// indirection. Indexed with <see cref="SimRngSlot"/>:
 /// <c>ref RandomState s = ref state.Rngs[(int)SimRngSlot.Shuffle];</c>
 ///
-/// Only <see cref="SimRngSlot.Shuffle"/> is captured today (Day-2
-/// implementation); the other 7 slots stay zero-default until the rest of
-/// the streams are wired up. CopyFrom does a single struct-assign that
-/// copies all 8 in one memcpy regardless of which are populated.
+/// Only <see cref="SimRngSlot.Shuffle"/> through <see cref="SimRngSlot.Niche"/>
+/// (all 8 in-combat streams) are captured by Snapshot. CopyFrom does a single
+/// struct-assign that copies all 8 in one memcpy.
 /// </summary>
 [System.Runtime.CompilerServices.InlineArray((int)SimRngSlot.Count)]
 internal struct RandomStateBuffer

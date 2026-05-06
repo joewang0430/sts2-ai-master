@@ -53,7 +53,13 @@ internal static class CombatDebugOverlay
     private static ColorRect? _bgPredict;
     private static Label?     _labelDmg;
     private static ColorRect? _bgDmg;
+    private static Label?     _labelSim;
+    private static ColorRect? _bgSim;
     private static CombatState? _state;
+
+    // ── Snapshot verification ─────────────────────────────────────────────────
+    // Reused across Refresh() calls; CopyFrom-style snapshot never allocates.
+    private static readonly SimCombatState _sim = new();
 
     // ── Next-turn-hand prediction state ───────────────────────────────────────
     // The prediction is computed during every Refresh() for state.RoundNumber + 1.
@@ -198,6 +204,30 @@ internal static class CombatDebugOverlay
         room.AddChild(_bgDmg);
         room.AddChild(_labelDmg);
 
+        // ── Sixth column — SIM DIFF (snapshot verification) ───────────────────
+        // Separated from dmg column to avoid crowding. x=1282 = 1004+270+8.
+        // Font 11 keeps line-height tight; AutowrapMode.Disabled avoids
+        // wrapping the "✓/✗ name=val" single-line entries.
+        _bgSim = new ColorRect
+        {
+            Color       = new Color(0f, 0f, 0f, 0.65f),
+            Position    = new Vector2(1282f, 8f),
+            Size        = new Vector2(290f, 560f),
+            ZIndex      = 99,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _labelSim = new Label
+        {
+            Position     = new Vector2(1286f, 12f),
+            Size         = new Vector2(282f, 552f),
+            ZIndex       = 100,
+            MouseFilter  = Control.MouseFilterEnum.Ignore,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+        };
+        _labelSim.AddThemeFontSizeOverride("font_size", 11);
+        room.AddChild(_bgSim);
+        room.AddChild(_labelSim);
+
         // ── Third column — potion selection ───────────────────────────────────
         // Parent the interactive widgets to a CanvasLayer so their input is
         // processed AFTER (i.e. ABOVE) every Control in the game's scene tree.
@@ -270,6 +300,8 @@ internal static class CombatDebugOverlay
         _bgPredict           = null;
         _labelDmg            = null;
         _bgDmg               = null;
+        _labelSim            = null;
+        _bgSim               = null;
         _bgPotions           = null;
         _potionButtonBox     = null;
         _potionApprovedLabel = null;
@@ -301,6 +333,8 @@ internal static class CombatDebugOverlay
                 _labelPredict.Text = string.Empty;
             if (_labelDmg is not null && GodotObject.IsInstanceValid(_labelDmg))
                 _labelDmg.Text = string.Empty;
+            if (_labelSim is not null && GodotObject.IsInstanceValid(_labelSim))
+                _labelSim.Text = string.Empty;
             if (_potionApprovedLabel is not null && GodotObject.IsInstanceValid(_potionApprovedLabel))
                 _potionApprovedLabel.Text = string.Empty;
             return;
@@ -315,6 +349,8 @@ internal static class CombatDebugOverlay
                 _labelPredict.Text = BuildPredictionText(_state);
             if (_labelDmg is not null && GodotObject.IsInstanceValid(_labelDmg))
                 _labelDmg.Text = BuildDmgPreviewText(_state);
+            if (_labelSim is not null && GodotObject.IsInstanceValid(_labelSim))
+                _labelSim.Text = BuildSimDiffText(_state);
 
             // Detect divergence between our tracked potions and the live list:
             //   - CombatSetUp may fire before _Ready, or Player.Potions may be
@@ -561,6 +597,432 @@ internal static class CombatDebugOverlay
 
         if (!any) sb.AppendLine("(no attack cards)");
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Runs <see cref="SimCombatState.Snapshot"/> on the current live state and
+    /// compares every field that is directly readable from the overlay against
+    /// the corresponding sim value. Appended to the DmgPreview column so it is
+    /// always visible without extra UI. One line per field: "✓" when sim==live,
+    /// "✗ sim=X live=Y" when not. Shows "SIM OK" header when all pass.
+    /// </summary>
+    private static string BuildSimDiffText(CombatState state)
+    {
+        var sb = new StringBuilder(512);
+        sb.AppendLine();
+        sb.AppendLine("── SIM DIFF ─────────────");
+
+        try
+        {
+            _sim.Snapshot(state);
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"Snapshot() threw:\n{ex.Message}");
+            return sb.ToString();
+        }
+
+        Player? me = LocalContext.GetMe(state);
+        if (me is null) { sb.AppendLine("(no local player)"); return sb.ToString(); }
+
+        Creature pc = me.Creature;
+        PlayerCombatState? pcs = me.PlayerCombatState;
+
+        bool allOk = true;
+
+        // Helper: append one comparison line, update allOk flag.
+        void Cmp(string name, object simVal, object liveVal)
+        {
+            bool ok = simVal.ToString() == liveVal.ToString();
+            if (!ok) allOk = false;
+            sb.AppendLine(ok
+                ? $"✓ {name}={simVal}"
+                : $"✗ {name}: sim={simVal} live={liveVal}");
+        }
+
+        Cmp("Round",   _sim.Round,       state.RoundNumber);
+        Cmp("HP",      _sim.PlayerHp,    pc.CurrentHp);
+        Cmp("MaxHP",   _sim.PlayerMaxHp, pc.MaxHp);
+        Cmp("Block",   _sim.PlayerBlock, pc.Block);
+
+        if (pcs is not null)
+        {
+            Cmp("Energy",    _sim.Energy,    pcs.Energy);
+            Cmp("MaxEnergy", _sim.MaxEnergy, pcs.MaxEnergy);
+            Cmp("HandN",     _sim.HandCount,    pcs.Hand.Cards.Count);
+            Cmp("DrawN",     _sim.DrawCount,    pcs.DrawPile.Cards.Count);
+            Cmp("DiscN",     _sim.DiscCount,    pcs.DiscardPile.Cards.Count);
+            Cmp("ExhN",      _sim.ExhaustCount, pcs.ExhaustPile.Cards.Count);
+
+            // Check each hand card's type+upgrade flag.
+            int hn = Math.Min(_sim.HandCount, pcs.Hand.Cards.Count);
+            for (int i = 0; i < hn; i++)
+            {
+                ushort enc  = _sim.Hand[i];
+                bool   simU = (enc & 0x8000) != 0;
+                bool   livU = pcs.Hand.Cards[i].IsUpgraded;
+                ushort sid  = (ushort)(enc & 0x7FFF);
+                string simN = ReverseCardName(sid);
+                string livN = pcs.Hand.Cards[i].GetType().Name;
+                bool ok = simN == livN && simU == livU;
+                if (!ok) allOk = false;
+                sb.AppendLine(ok
+                    ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}"
+                    : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}");
+            }
+
+            // Bulk pile diff: scan every card, summarize. A full per-card dump
+            // would blow past column height for 50+ card decks; instead show
+            // total mismatch count and the first few offenders.
+            DiffPile(sb, "Draw", _sim.Draw, _sim.DrawCount, pcs.DrawPile.Cards,    ref allOk);
+            DiffPile(sb, "Disc", _sim.Disc, _sim.DiscCount, pcs.DiscardPile.Cards, ref allOk);
+            DiffPile(sb, "Exh",  _sim.Exhaust, _sim.ExhaustCount, pcs.ExhaustPile.Cards, ref allOk);
+        }
+
+        // ── Player powers: walk live list, look up sim slot via registry,
+        //    compare amount. Powers not in the registry (e.g. game-data drift,
+        //    or *.Powers.Mocks if any leak) are flagged once.
+        DiffPowers(sb, "P.Pwr", pc.Powers, _sim.PlayerPowers, 0, ref allOk);
+
+        // Enemy counts + HP/Block/Intent for each.
+        Cmp("EnemyN", _sim.EnemyCount, state.Enemies.Count);
+        int en = Math.Min(_sim.EnemyCount, state.Enemies.Count);
+        for (int i = 0; i < en; i++)
+        {
+            Creature e = state.Enemies[i];
+            Cmp($"E{i}.HP",    _sim.EnemyHp[i],    e.CurrentHp);
+            Cmp($"E{i}.MaxHP", _sim.EnemyMaxHp[i], e.MaxHp);
+            Cmp($"E{i}.Block", _sim.EnemyBlock[i],  e.Block);
+
+            // Intent kind / damage / hits.
+            DiffIntent(sb, i, e, ref allOk);
+
+            // Per-enemy power row.
+            DiffPowers(sb, $"E{i}.Pwr", e.Powers, _sim.EnemyPowers,
+                       i * SimCombatState.PowersPerCre, ref allOk);
+        }
+
+        // ── RNG: re-capture every in-combat stream and byte-compare to
+        //    the sim's stored copy. Equality proves Snapshot wrote each
+        //    Knuth state (56-int seedArray + 2 cursors) bit-exact, which is
+        //    the precondition for offline replay during DFS search.
+        DiffAllRng(sb, state, ref allOk);
+
+        if (allOk) sb.Insert(sb.ToString().IndexOf('\n', sb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
+        return PackTwoPerLine(sb.ToString());
+    }
+
+    /// <summary>
+    /// Post-process the SIM DIFF text: pair consecutive single-data lines so
+    /// each terminal row shows two entries separated by " │ ". Lines that are
+    /// indented (detail/mismatch entries starting with "  "), empty, the
+    /// header, or "ALL OK" stay on their own row to preserve readability.
+    /// Halves vertical height of the panel without losing any information.
+    /// </summary>
+    private static string PackTwoPerLine(string raw)
+    {
+        // Pad to a fixed cell width so the second column lines up vertically.
+        // 22 chars covers "✓ MaxEnergy=N" / "✓ E5.MaxHP=NNNN" comfortably.
+        const int CellW = 22;
+
+        var lines  = raw.Split('\n');
+        var sb     = new StringBuilder(raw.Length);
+        string?    pending = null;
+
+        bool IsStandalone(string s) =>
+            s.Length == 0
+            || s.StartsWith("  ", StringComparison.Ordinal)   // indented detail
+            || s.StartsWith("──", StringComparison.Ordinal)   // header rule
+            || s.Contains("SIM DIFF")
+            || s.Contains("ALL OK")
+            || s.StartsWith("✗ ", StringComparison.Ordinal)   // keep mismatches full-width
+            || s.StartsWith("(", StringComparison.Ordinal);   // "(no local player)" etc.
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            string l = lines[i].TrimEnd('\r');
+
+            if (IsStandalone(l))
+            {
+                // Flush any half-pair before emitting a standalone line.
+                if (pending != null) { sb.AppendLine(pending); pending = null; }
+                sb.AppendLine(l);
+                continue;
+            }
+
+            if (pending == null) pending = l;
+            else
+            {
+                // Pair: left padded to fixed width, then separator + right.
+                sb.Append(pending);
+                int pad = CellW - pending.Length;
+                if (pad > 0) sb.Append(' ', pad);
+                sb.Append(" │ ").AppendLine(l);
+                pending = null;
+            }
+        }
+        if (pending != null) sb.AppendLine(pending);
+        return sb.ToString();
+    }
+
+    // ── SIM DIFF helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Compare a sim pile slice to a live <see cref="CardModel"/> list. Output
+    /// is one summary line per pile plus up to 3 mismatch lines (capping output
+    /// keeps the column readable for 100+ card decks).
+    /// </summary>
+    private static void DiffPile(
+        StringBuilder sb, string tag,
+        ushort[] simSlice, int simCount,
+        IReadOnlyList<CardModel> live,
+        ref bool allOk)
+    {
+        int n = Math.Min(simCount, live.Count);
+        int diffs = 0;
+        var firstMismatches = new System.Text.StringBuilder(64);
+        for (int i = 0; i < n; i++)
+        {
+            ushort enc  = simSlice[i];
+            bool   simU = (enc & 0x8000) != 0;
+            ushort sid  = (ushort)(enc & 0x7FFF);
+            string simN = ReverseCardName(sid);
+            string livN = live[i].GetType().Name;
+            bool   livU = live[i].IsUpgraded;
+            if (simN != livN || simU != livU)
+            {
+                if (diffs < 3)
+                    firstMismatches.AppendLine(
+                        $"  ✗ {tag}[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}");
+                diffs++;
+            }
+        }
+        if (diffs == 0 && simCount == live.Count)
+        {
+            sb.AppendLine($"✓ {tag}({n})");
+        }
+        else
+        {
+            allOk = false;
+            sb.AppendLine($"✗ {tag}: {diffs} mismatch(es), simN={simCount} liveN={live.Count}");
+            if (firstMismatches.Length > 0) sb.Append(firstMismatches);
+        }
+    }
+
+    /// <summary>
+    /// Compare a live <see cref="PowerModel"/> list to the corresponding dense
+    /// sim row. <paramref name="rowBase"/> is the offset into <paramref name="simRow"/>
+    /// (0 for player; <c>i * PowersPerCre</c> for enemy <c>i</c>).
+    /// </summary>
+    private static void DiffPowers(
+        StringBuilder sb, string tag,
+        IReadOnlyList<PowerModel> live, short[] simRow, int rowBase,
+        ref bool allOk)
+    {
+        // Live → sim direction: every live power must be reflected in the sim row.
+        int diffs = 0;
+        var msgs = new System.Text.StringBuilder(64);
+        int liveCount = live.Count;
+        for (int i = 0; i < liveCount; i++)
+        {
+            PowerModel p = live[i];
+            Type t = p.GetType();
+            if (!SimPowerRegistry.TryGetIndex(t, out int idx))
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}: unregistered {t.Name}");
+                continue;
+            }
+            short simAmt  = simRow[rowBase + idx];
+            int   liveAmt = p.Amount;
+            if (simAmt != liveAmt)
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}.{t.Name}: sim={simAmt} live={liveAmt}");
+            }
+        }
+        // Sim → live direction: any non-zero sim slot whose power is not in live
+        // means we wrote a phantom power. Cheap to detect; iterates 259 ints.
+        for (int idx = 0; idx < SimCombatState.PowersPerCre; idx++)
+        {
+            short simAmt = simRow[rowBase + idx];
+            if (simAmt == 0) continue;
+            // Look for matching live power.
+            bool found = false;
+            for (int i = 0; i < liveCount; i++)
+            {
+                if (SimPowerRegistry.TryGetIndex(live[i].GetType(), out int liveIdx) && liveIdx == idx)
+                { found = true; break; }
+            }
+            if (!found)
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}: phantom slot[{idx}]={simAmt}");
+            }
+        }
+
+        if (diffs == 0)
+        {
+            // Compact: count only living powers (non-zero) to keep noise low.
+            int activeCount = 0;
+            for (int i = 0; i < liveCount; i++)
+                if (SimPowerRegistry.TryGetIndex(live[i].GetType(), out _)) activeCount++;
+            sb.AppendLine($"✓ {tag}({activeCount})");
+        }
+        else
+        {
+            allOk = false;
+            sb.AppendLine($"✗ {tag}: {diffs} diff(s)");
+            if (msgs.Length > 0) sb.Append(msgs);
+        }
+    }
+
+    /// <summary>
+    /// Reclassify the live enemy's intent and compare to the captured
+    /// <see cref="SimCombatState.EnemyIntent"/> byte; for Attack/DeathBlow,
+    /// also verify base damage and hit count match what Snapshot computed.
+    /// </summary>
+    private static void DiffIntent(StringBuilder sb, int i, Creature e, ref bool allOk)
+    {
+        // Mirror the classification logic in SimCombatState.Snapshot.CaptureIntent.
+        var move  = e.Monster?.NextMove;
+        SimIntent liveKind = SimIntent.Unknown;
+        ushort liveDmg     = 0;
+        byte   liveHits    = 0;
+        if (move != null && move.Intents.Count > 0)
+        {
+            switch (move.Intents[0])
+            {
+                case DeathBlowIntent dbi:
+                    liveKind = SimIntent.DeathBlow;
+                    liveDmg  = AttackDamageFor(dbi);
+                    liveHits = AttackHitsFor(dbi);
+                    break;
+                case AttackIntent ai:
+                    liveKind = SimIntent.Attack;
+                    liveDmg  = AttackDamageFor(ai);
+                    liveHits = AttackHitsFor(ai);
+                    break;
+                case BuffIntent:       liveKind = SimIntent.Buff; break;
+                case CardDebuffIntent: liveKind = SimIntent.CardDebuff; break;
+                case DebuffIntent dbi:
+                    liveKind = dbi.IntentType == IntentType.DebuffStrong
+                        ? SimIntent.DebuffStrong : SimIntent.Debuff;
+                    break;
+                case DefendIntent: liveKind = SimIntent.Defend; break;
+                case EscapeIntent: liveKind = SimIntent.Escape; break;
+                case HealIntent:   liveKind = SimIntent.Heal; break;
+                case HiddenIntent: liveKind = SimIntent.Hidden; break;
+                case SleepIntent:  liveKind = SimIntent.Sleep; break;
+                case StatusIntent: liveKind = SimIntent.StatusCard; break;
+                case StunIntent:   liveKind = SimIntent.Stun; break;
+                case SummonIntent: liveKind = SimIntent.Summon; break;
+            }
+        }
+
+        SimIntent simKind = (SimIntent)_sim.EnemyIntent[i];
+        bool kindOk = simKind == liveKind;
+        if (!kindOk) allOk = false;
+        sb.AppendLine(kindOk
+            ? $"✓ E{i}.Intent={simKind}"
+            : $"✗ E{i}.Intent: sim={simKind} live={liveKind}");
+
+        if (liveKind == SimIntent.Attack || liveKind == SimIntent.DeathBlow)
+        {
+            ushort simDmg  = _sim.EnemyIntentDmg[i];
+            byte   simHits = _sim.EnemyIntentHits[i];
+            bool   dmgOk   = simDmg  == liveDmg;
+            bool   hitsOk  = simHits == liveHits;
+            if (!dmgOk)  { allOk = false; sb.AppendLine($"✗ E{i}.Dmg: sim={simDmg} live={liveDmg}"); }
+            else         {                 sb.AppendLine($"✓ E{i}.Dmg={simDmg}"); }
+            if (!hitsOk) { allOk = false; sb.AppendLine($"✗ E{i}.Hits: sim={simHits} live={liveHits}"); }
+            else         {                 sb.AppendLine($"✓ E{i}.Hits={simHits}"); }
+        }
+    }
+
+    private static ushort AttackDamageFor(AttackIntent ai)
+    {
+        var calc = ai.DamageCalc;
+        if (calc == null) return 0;
+        decimal raw = calc();
+        if (raw < 0m)     return 0;
+        if (raw > 65535m) return 65535;
+        return (ushort)raw;
+    }
+
+    private static byte AttackHitsFor(AttackIntent ai)
+    {
+        int hits = ai.Repeats + 1;
+        if (hits < 1)   hits = 1;
+        if (hits > 255) hits = 255;
+        return (byte)hits;
+    }
+
+    /// <summary>
+    /// Re-capture every in-combat live RNG stream and byte-compare to the
+    /// sim's stored slot. Stack-allocated scratch — zero heap. One ✓/✗ line
+    /// per stream; mismatches show the cursor pair sim vs live.
+    /// </summary>
+    private static unsafe void DiffAllRng(StringBuilder sb, CombatState state, ref bool allOk)
+    {
+        var rngSet = state.RunState.Rng;
+        DiffOneRng(sb, "RngShuf",     rngSet.Shuffle,              SimRngSlot.Shuffle,              ref allOk);
+        DiffOneRng(sb, "RngTgt",      rngSet.CombatTargets,        SimRngSlot.CombatTargets,        ref allOk);
+        DiffOneRng(sb, "RngCardGen",  rngSet.CombatCardGeneration, SimRngSlot.CombatCardGeneration, ref allOk);
+        DiffOneRng(sb, "RngCardSel",  rngSet.CombatCardSelection,  SimRngSlot.CombatCardSelection,  ref allOk);
+        DiffOneRng(sb, "RngEnergy",   rngSet.CombatEnergyCosts,    SimRngSlot.CombatEnergyCosts,    ref allOk);
+        DiffOneRng(sb, "RngOrb",      rngSet.CombatOrbGeneration,  SimRngSlot.CombatOrbGeneration,  ref allOk);
+        DiffOneRng(sb, "RngMonAi",    rngSet.MonsterAi,            SimRngSlot.MonsterAi,            ref allOk);
+        DiffOneRng(sb, "RngNiche",    rngSet.Niche,                SimRngSlot.Niche,                ref allOk);
+    }
+
+    private static unsafe void DiffOneRng(
+        StringBuilder sb, string tag, Rng liveRng, SimRngSlot slot, ref bool allOk)
+    {
+        try
+        {
+            RandomState live = default;
+            RandomStateOps.CaptureFromRng(liveRng, ref live);
+            ref RandomState sim = ref _sim.Rng(slot);
+
+            bool ok = sim.INext == live.INext && sim.INextp == live.INextp;
+            if (ok)
+            {
+                for (int k = 0; k < RandomState.ArrLen; k++)
+                {
+                    if (sim.Arr[k] != live.Arr[k]) { ok = false; break; }
+                }
+            }
+
+            if (ok) sb.AppendLine($"✓ {tag}");
+            else
+            {
+                allOk = false;
+                sb.AppendLine(
+                    $"✗ {tag}: iN sim={sim.INext} live={live.INext} " +
+                    $"iNp sim={sim.INextp} live={live.INextp}");
+            }
+        }
+        catch (Exception ex)
+        {
+            allOk = false;
+            sb.AppendLine($"✗ {tag} threw: {ex.Message}");
+        }
+    }
+
+    // Lazy reverse map ushort id → type name, built once on first diff.
+    private static System.Collections.Generic.Dictionary<ushort, string>? _cardNameById;
+    private static string ReverseCardName(ushort id)
+    {
+        if (_cardNameById is null)
+        {
+            var fld = typeof(SimCardDb).GetField("_byType",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            _cardNameById = new System.Collections.Generic.Dictionary<ushort, string>();
+            if (fld?.GetValue(null) is System.Collections.Frozen.FrozenDictionary<Type, ushort> map)
+                foreach (var kv in map) _cardNameById[kv.Value] = kv.Key.Name;
+        }
+        return _cardNameById.TryGetValue(id, out string? n) ? n : $"id{id}?";
     }
 
     private static string BuildRelicText(CombatState state)
