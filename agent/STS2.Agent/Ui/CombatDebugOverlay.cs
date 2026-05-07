@@ -658,10 +658,10 @@ internal static class CombatDebugOverlay
             int hn = Math.Min(_sim.HandCount, pcs.Hand.Cards.Count);
             for (int i = 0; i < hn; i++)
             {
-                ushort enc  = _sim.Hand[i];
-                bool   simU = (enc & 0x8000) != 0;
+                ref var sc = ref _sim.Hand[i];
+                bool   simU = sc.IsUpgraded;
                 bool   livU = pcs.Hand.Cards[i].IsUpgraded;
-                ushort sid  = (ushort)(enc & 0x7FFF);
+                ushort sid  = sc.BaseCardId;
                 string simN = ReverseCardName(sid);
                 string livN = pcs.Hand.Cards[i].GetType().Name;
                 bool ok = simN == livN && simU == livU;
@@ -774,7 +774,7 @@ internal static class CombatDebugOverlay
     /// </summary>
     private static void DiffPile(
         StringBuilder sb, string tag,
-        ushort[] simSlice, int simCount,
+        SimCard[] simSlice, int simCount,
         IReadOnlyList<CardModel> live,
         ref bool allOk)
     {
@@ -783,9 +783,9 @@ internal static class CombatDebugOverlay
         var firstMismatches = new System.Text.StringBuilder(64);
         for (int i = 0; i < n; i++)
         {
-            ushort enc  = simSlice[i];
-            bool   simU = (enc & 0x8000) != 0;
-            ushort sid  = (ushort)(enc & 0x7FFF);
+            ref var sc = ref simSlice[i];
+            bool   simU = sc.IsUpgraded;
+            ushort sid  = sc.BaseCardId;
             string simN = ReverseCardName(sid);
             string livN = live[i].GetType().Name;
             bool   livU = live[i].IsUpgraded;

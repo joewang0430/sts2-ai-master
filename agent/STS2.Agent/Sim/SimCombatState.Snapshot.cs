@@ -158,11 +158,12 @@ internal sealed partial class SimCombatState
     }
 
     /// <summary>
-    /// Encode every CardModel in <paramref name="pile"/> as ushort
-    /// (bit15 = upgraded, bits0-14 = SimCardId) and write into
-    /// <paramref name="dst"/>. Returns the number of cards written.
+    /// Encode every <see cref="CardModel"/> in <paramref name="pile"/> as a
+    /// <see cref="SimCard"/> (CardId ushort with bit15=upgraded plus the seven
+    /// mutable per-instance fields) and write into <paramref name="dst"/>.
+    /// Returns the number of cards written.
     /// </summary>
-    private static int SnapshotPile(CardPile pile, ushort[] dst)
+    private static int SnapshotPile(CardPile pile, SimCard[] dst)
     {
         var cards = pile.Cards;
         int n = cards.Count;
@@ -172,12 +173,49 @@ internal sealed partial class SimCombatState
         for (int i = 0; i < n; i++)
         {
             CardModel card = cards[i];
+
+            // CardId: 15-bit SimCardId + bit-15 upgrade flag.
             ushort id = SimCardDb.GetId(card.GetType());
             if (card.IsUpgraded) id |= 0x8000;
-            dst[i] = id;
+
+            // Flags: ExhaustOnNextPlay is the only public dynamic-flag getter
+            // we need; ShouldRetainThisTurn / IsSlyThisTurn collapse the
+            // (per-instance _hasSingleTurnXxx OR static Keywords) source — for
+            // sim outcomes this combined truth is what matters.
+            byte flags = 0;
+            if (card.ExhaustOnNextPlay)    flags |= SimCard.FlagExhaustOnNextPlay;
+            if (card.ShouldRetainThisTurn) flags |= SimCard.FlagShouldRetainThisTurn;
+            if (card.IsSlyThisTurn)        flags |= SimCard.FlagIsSlyThisTurn;
+
+            // Enchantment: 0 = none. Unknown EnchantmentModel subclasses fall
+            // through to None (SimCaps validates the registry at startup, so
+            // this branch is defensive — should never hit at runtime).
+            byte encId = 0;
+            byte encAmt = 0;
+            EnchantmentModel? ench = card.Enchantment;
+            if (ench != null)
+            {
+                encId  = SimEnchantmentRegistry.GetIndexOrNone(ench.GetType());
+                encAmt = ClampU8(ench.Amount);
+            }
+
+            dst[i] = new SimCard
+            {
+                CardId            = id,
+                BaseStarCost      = ClampS8(card.BaseStarCost),
+                LastStarsSpent    = ClampU8(card.LastStarsSpent),
+                BaseReplayCount   = ClampU8(card.BaseReplayCount),
+                Flags             = flags,
+                EnchantmentId     = encId,
+                EnchantmentAmount = encAmt,
+            };
         }
         return n;
     }
+
+    private static byte  ClampU8(int v) => v < 0 ? (byte)0 : v > 255 ? (byte)255 : (byte)v;
+    private static sbyte ClampS8(int v) => v < sbyte.MinValue ? sbyte.MinValue
+                                          : v > sbyte.MaxValue ? sbyte.MaxValue : (sbyte)v;
 
     /// <summary>
     /// Inspect <paramref name="enemy"/>.Monster.NextMove.Intents[0] and write

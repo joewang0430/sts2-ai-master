@@ -108,6 +108,31 @@ internal static class SimCaps
                 ". Add typeof(...) → SimPowerType.Xxx entries and bump SimPowerType.Count.");
         }
 
+        // ── 5. Every concrete EnchantmentModel must be registered in
+        //    SimEnchantmentRegistry. Mirrors the Power check. *.Enchantments.Mocks
+        //    namespace is skipped (test fixtures only). DeprecatedEnchantment is
+        //    explicitly registered so no live save can leak a "0 = None" id for
+        //    a card that actually has an enchantment.
+        List<string>? missingEnch = null;
+        foreach (EnchantmentModel ench in ModelDb.DebugEnchantments)
+        {
+            Type t = ench.GetType();
+            string? ns = t.Namespace;
+            if (ns != null && ns.EndsWith(".Enchantments.Mocks", StringComparison.Ordinal)) continue;
+            if (!SimEnchantmentRegistry.TryGetIndex(t, out _))
+            {
+                missingEnch ??= new List<string>();
+                missingEnch.Add(t.FullName ?? t.Name);
+            }
+        }
+        if (missingEnch is { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "SimCaps: EnchantmentModel subclasses not registered in SimEnchantmentRegistry: " +
+                string.Join(", ", missingEnch) +
+                ". Add typeof(...) → SimEnchantmentType.Xxx entries and bump SimEnchantmentType.Count.");
+        }
+
         // All invariants hold. (Worst-case encounter is informational only.)
         _ = worstEncounter; _ = worstSlots;
     }

@@ -118,13 +118,18 @@ internal sealed partial class SimCombatState
     /// </summary>
     public readonly short[] EnemyPowers = new short[EnemyCap * PowersPerCre];
 
-    // ── Card piles (CardId ushorts; behavior in SimCardDb) ──────────────────────────
-    // ushort: 15-bit id + upgrade flag in bit 15; byte (256) is too small.
+    // ── Card piles (SimCard structs; 8 bytes each) ──────────────────────────────
+    // SimCard wraps the CardId ushort with the seven mutable per-instance fields
+    // a CardModel can carry mid-combat (BaseStarCost, LastStarsSpent,
+    // BaseReplayCount, Flags, EnchantmentId, EnchantmentAmount). A card
+    // shuffled Disc → Draw → Hand keeps its identity bit-exact.
     // *Count stays int because loop bounds are JIT-friendlier as int.
-    public readonly ushort[] Hand    = new ushort[HandCap];   public int HandCount;
-    public readonly ushort[] Draw    = new ushort[PileCap];   public int DrawCount;
-    public readonly ushort[] Disc    = new ushort[PileCap];   public int DiscCount;
-    public readonly ushort[] Exhaust = new ushort[PileCap];   public int ExhaustCount;
+    // Storage: 4 piles × (10 + 200 + 200 + 200) × 8 B = 4880 B (≈77 cache lines),
+    // up from 1220 B with the old ushort encoding (+3660 B per snapshot).
+    public readonly SimCard[] Hand    = new SimCard[HandCap];   public int HandCount;
+    public readonly SimCard[] Draw    = new SimCard[PileCap];   public int DrawCount;
+    public readonly SimCard[] Disc    = new SimCard[PileCap];   public int DiscCount;
+    public readonly SimCard[] Exhaust = new SimCard[PileCap];   public int ExhaustCount;
 
     // ── RNG (bit-exact mirrors of the game's per-stream System.Random instances) ─
     // 8 inline slots, indexed by SimRngSlot. Snapshot fills all 8; CopyFrom
