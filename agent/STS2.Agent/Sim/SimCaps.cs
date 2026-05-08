@@ -159,7 +159,11 @@ internal static class SimCaps
             if (!t.IsSubclassOf(typeof(OrbModel))) continue;
             if (t.IsAbstract) continue;
             string? ns = t.Namespace;
-            if (ns != null && ns.EndsWith(".Orbs.Mocks", StringComparison.Ordinal)) continue;
+            // Game source uses *.Orbs.Mock (singular) for orb test fixtures,
+            // unlike *.Powers.Mocks / *.Enchantments.Mocks (plural). Match both
+            // so a future rename does not silently re-include test orbs.
+            if (ns != null && (ns.EndsWith(".Orbs.Mock", StringComparison.Ordinal)
+                            || ns.EndsWith(".Orbs.Mocks", StringComparison.Ordinal))) continue;
             if (!SimOrbRegistry.TryGetIndex(t, out _))
             {
                 missingOrb ??= new List<string>();
