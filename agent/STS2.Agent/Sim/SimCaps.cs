@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.Orbs;
 using MegaCrit.Sts2.Core.Models;
 
 namespace STS2.Agent.Sim;
@@ -131,6 +132,46 @@ internal static class SimCaps
                 "SimCaps: EnchantmentModel subclasses not registered in SimEnchantmentRegistry: " +
                 string.Join(", ", missingEnch) +
                 ". Add typeof(...) → SimEnchantmentType.Xxx entries and bump SimEnchantmentType.Count.");
+        }
+
+        // ── 6. Orb queue capacity must equal SimCombatState's OrbSlots10
+        //    inline length (10). If the game ever raises maxCapacity, the
+        //    snapshot loop would silently truncate the queue.
+        if (OrbQueue.maxCapacity != 10)
+        {
+            throw new InvalidOperationException(
+                $"SimCaps: OrbQueue.maxCapacity={OrbQueue.maxCapacity} but " +
+                "SimCombatState.OrbSlots is hard-sized to 10 via [InlineArray(10)]. " +
+                "Update OrbSlots10 and rebuild.");
+        }
+
+        // ── 7. Every concrete OrbModel subclass must be registered in
+        //    SimOrbRegistry. Snapshot reads orbs through the registry; an
+        //    unknown subclass would land as SimOrbType.None (= empty),
+        //    silently dropping the orb from the simulation.
+        //    We iterate AllAbstractModelSubtypes (not ModelDb.Orbs) because
+        //    the curated Orbs list only ships canonical content; experimental
+        //    types like GlassOrb are present in the assembly but not yet
+        //    listed there. Mocks namespace is skipped (test fixtures only).
+        List<string>? missingOrb = null;
+        foreach (Type t in ModelDb.AllAbstractModelSubtypes)
+        {
+            if (!t.IsSubclassOf(typeof(OrbModel))) continue;
+            if (t.IsAbstract) continue;
+            string? ns = t.Namespace;
+            if (ns != null && ns.EndsWith(".Orbs.Mocks", StringComparison.Ordinal)) continue;
+            if (!SimOrbRegistry.TryGetIndex(t, out _))
+            {
+                missingOrb ??= new List<string>();
+                missingOrb.Add(t.FullName ?? t.Name);
+            }
+        }
+        if (missingOrb is { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "SimCaps: OrbModel subclasses not registered in SimOrbRegistry: " +
+                string.Join(", ", missingOrb) +
+                ". Add typeof(...) → SimOrbType.Xxx entries and bump SimOrbType.Count.");
         }
 
         // All invariants hold. (Worst-case encounter is informational only.)

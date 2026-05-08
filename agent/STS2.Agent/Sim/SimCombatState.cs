@@ -87,6 +87,16 @@ internal sealed partial class SimCombatState
     public ushort MaxEnergy;
 
     /// <summary>
+    /// Crown Prince / Regent star resource. The game stores it as <c>int</c>
+    /// (<c>PlayerCombatState._stars</c>) with no upper cap, but realistic builds
+    /// stay under a few hundred even with Genesis/StarNextTurn stacking, so
+    /// ushort is comfortable. Per-turn star spend is tracked on the card itself
+    /// (<see cref="SimCard.LastStarsSpent"/>) — no second player-side counter
+    /// is needed; relics like GalacticDust read the per-card field.
+    /// </summary>
+    public ushort PlayerStars;
+
+    /// <summary>
     /// Indexed by SimPowerType.*. Layer count as short: signed for Strength-Down
     /// (negative Strength) and wide enough for Poison / Thorns / RollingBoulder
     /// stacking far beyond sbyte's 127 cap.
@@ -131,6 +141,28 @@ internal sealed partial class SimCombatState
     public readonly SimCard[] Disc    = new SimCard[PileCap];   public int DiscCount;
     public readonly SimCard[] Exhaust = new SimCard[PileCap];   public int ExhaustCount;
 
+    // ── Orb queue (Defect / Malfunctioning Robot) ─────────────────────────────
+    // OrbQueue.maxCapacity = 10 in game source (asserted by SimCaps). Each
+    // slot is one packed ushort: low 3 bits = SimOrbType, high 13 bits =
+    // per-instance mutable value (DarkOrb._evokeVal / GlassOrb._passiveVal,
+    // 0 for stateless orb types). 10 × 2 B = 20 B, contiguous in one cache
+    // line. OrbCount is the live queue length; OrbCapacity is the player's
+    // current slot count (≤ 10), grown via OrbCmd.IncreaseCapacity.
+    // Eviction (when capacity is reduced) drops from the *back* (LIFO),
+    // matching OrbQueue.RemoveCapacity which calls _orbs.Last().
+    public OrbSlots10 OrbSlots;
+    public byte OrbCount;
+    public byte OrbCapacity;
+
+    // ── Pet (Necromancer's Osty) ──────────────────────────────────────────────
+    // Single slot: the only pet type the game ships is Osty, and Player.Osty
+    // resolves via FirstOrDefault<Osty>() so even the framework caps it at 1.
+    // OstyPowers mirrors the Player/Enemy power-row layout (short[259]) so the
+    // hook-dispatch helper can address Osty with the same code path. Storage:
+    // 8 B (SimPet) + 518 B (OstyPowers) = 526 B per state.
+    public SimPet Osty;
+    public readonly short[] OstyPowers = new short[PowersPerCre];
+
     // ── RNG (bit-exact mirrors of the game's per-stream System.Random instances) ─
     // 8 inline slots, indexed by SimRngSlot. Snapshot fills all 8; CopyFrom
     // uses a single struct assignment that memcpy's the entire 1824-byte
@@ -169,11 +201,22 @@ internal sealed partial class SimCombatState
         PlayerBlock   = src.PlayerBlock;
         Energy        = src.Energy;
         MaxEnergy     = src.MaxEnergy;
+        PlayerStars   = src.PlayerStars;
         EnemyCount    = src.EnemyCount;
         HandCount     = src.HandCount;
         DrawCount     = src.DrawCount;
         DiscCount     = src.DiscCount;
         ExhaustCount  = src.ExhaustCount;
+
+        // Orb queue: 20-byte inline struct + 2 scalar bytes — single struct copy.
+        OrbSlots      = src.OrbSlots;
+        OrbCount      = src.OrbCount;
+        OrbCapacity   = src.OrbCapacity;
+
+        // Pet: 8-byte struct copy + full 518-byte power vector. Powers are
+        // copied unconditionally (Exists=0 ⇒ vector is already zero from Reset).
+        Osty = src.Osty;
+        Array.Copy(src.OstyPowers, OstyPowers, PowersPerCre);
 
         // RNG state: 8 × 228 = 1824-byte struct copy (single memcpy, no allocation).
         Rngs = src.Rngs;
@@ -214,11 +257,16 @@ internal sealed partial class SimCombatState
         Round = 0;
         PlayerHp = PlayerMaxHp = PlayerBlock = 0;
         Energy = MaxEnergy = 0;
+        PlayerStars = 0;
         EnemyCount = 0;
         HandCount = DrawCount = DiscCount = ExhaustCount = 0;
+        OrbSlots = default;
+        OrbCount = OrbCapacity = 0;
+        Osty = default;
         Rngs = default;
         Array.Clear(PlayerPowers, 0, PowersPerCre);
         Array.Clear(EnemyPowers,  0, EnemyCap * PowersPerCre);
+        Array.Clear(OstyPowers,   0, PowersPerCre);
         Array.Clear(EnemyIntent,  0, EnemyCap);
     }
 }

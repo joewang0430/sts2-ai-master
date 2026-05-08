@@ -2,8 +2,11 @@ using System;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Orbs;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Monsters;
+using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 
 namespace STS2.Agent.Sim;
@@ -61,10 +64,17 @@ internal sealed partial class SimCombatState
         PlayerBlock  = ClampU16(playerCreature.Block);
         Energy       = ClampU16(pcs.Energy);
         MaxEnergy    = ClampU16(pcs.MaxEnergy);
+        PlayerStars  = ClampU16(pcs.Stars);
 
         // 5) Player powers — write Amount into the dense slot. Unknown power
         //    types would be a SimCaps violation, so we trust the registry.
         WritePowers(playerCreature.Powers, PlayerPowers);
+
+        // 5b) Orb queue (Defect only; queue exists but stays empty for other characters).
+        SnapshotOrbs(pcs.OrbQueue);
+
+        // 5c) Pet (Necromancer only; cleared to default for other characters).
+        SnapshotOsty(pcs);
 
         // 6) Player piles. CardPile.Cards is IReadOnlyList<CardModel>; backed by
         //    a List internally, so for-loop indexing is JIT-friendly and alloc-free.
@@ -216,6 +226,66 @@ internal sealed partial class SimCombatState
     private static byte  ClampU8(int v) => v < 0 ? (byte)0 : v > 255 ? (byte)255 : (byte)v;
     private static sbyte ClampS8(int v) => v < sbyte.MinValue ? sbyte.MinValue
                                           : v > sbyte.MaxValue ? sbyte.MaxValue : (sbyte)v;
+
+    /// <summary>
+    /// Pack the live <see cref="OrbQueue"/> into <see cref="OrbSlots"/>.
+    /// Each orb becomes one ushort: low 3 bits = SimOrbType, high 13 bits =
+    /// the per-instance mutable state (raw <c>_evokeVal</c> for DarkOrb,
+    /// raw <c>_passiveVal</c> for GlassOrb, 0 otherwise). Reflection reads
+    /// the private backing fields because the public PassiveVal/EvokeVal
+    /// properties already apply Focus, which is power-side state we capture
+    /// separately on PlayerPowers.
+    ///
+    /// Slots beyond <see cref="OrbCount"/> are left at 0 (None) by Reset(),
+    /// so DFS never reads past the live prefix.
+    /// </summary>
+    private void SnapshotOrbs(OrbQueue queue)
+    {
+        var orbs = queue.Orbs;
+        int n = orbs.Count;
+        if (n > 10)
+            throw new InvalidOperationException(
+                $"SimCombatState.Snapshot: orb queue has {n} orbs > maxCapacity 10. " +
+                "OrbQueue.maxCapacity changed in game source — update OrbSlots10 accordingly.");
+
+        OrbCount    = (byte)n;
+        OrbCapacity = ClampU8(queue.Capacity);
+
+        for (int i = 0; i < n; i++)
+        {
+            OrbModel orb = orbs[i];
+            byte type = SimOrbRegistry.GetIndexOrNone(orb.GetType());
+            int  mut  = orb switch
+            {
+                DarkOrb  d => SimOrbRegistry.ReadDarkEvokeVal(d),
+                GlassOrb g => SimOrbRegistry.ReadGlassPassiveVal(g),
+                _          => 0,
+            };
+            OrbSlots[i] = SimOrb.Pack(type, mut);
+        }
+    }
+
+    /// <summary>
+    /// Capture the Necromancer's Osty pet — the only pet currently shipped.
+    /// <c>PlayerCombatState.GetPet&lt;Osty&gt;()</c> is FirstOrDefault, so at
+    /// most one is returned. If no Osty has ever been summoned this combat,
+    /// the SimPet stays at default (Exists=0); if it died, Exists stays 1
+    /// and CurrentHp=0 (corpse retained for OstyCmd.Summon revival).
+    /// </summary>
+    private void SnapshotOsty(PlayerCombatState pcs)
+    {
+        Creature? pet = pcs.GetPet<Osty>();
+        if (pet == null) return;   // never summoned this combat — leave default.
+
+        Osty = new SimPet
+        {
+            CurrentHp = ClampU16(pet.CurrentHp),
+            MaxHp     = ClampU16(pet.MaxHp),
+            Block     = ClampU16(pet.Block),
+            Exists    = 1,
+        };
+        WritePowers(pet.Powers, OstyPowers);
+    }
 
     /// <summary>
     /// Inspect <paramref name="enemy"/>.Monster.NextMove.Intents[0] and write
