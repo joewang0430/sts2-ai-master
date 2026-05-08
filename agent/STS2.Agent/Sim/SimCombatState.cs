@@ -103,6 +103,15 @@ internal sealed partial class SimCombatState
     /// </summary>
     public readonly short[] PlayerPowers = new short[PowersPerCre];
 
+    /// <summary>
+    /// Player-side mirror of the private mutable counters that ~12 PowerModel
+    /// subclasses keep beyond <c>Amount</c> (e.g. Feral.zeroCostAttacksPlayed,
+    /// Orbit.energySpent, Automation.cardsLeft). 14 packed bytes — see
+    /// <see cref="SimPowerInternal"/> for the full mapping. Powers not on
+    /// this creature leave their slot at 0, which is the correct neutral.
+    /// </summary>
+    public SimPowerInternal PlayerPowerInternal;
+
     // ── Enemies (parallel arrays of length EnemyCap; valid range [0, EnemyCount)) ─
     public int EnemyCount;
     public readonly ushort[] EnemyHp         = new ushort[EnemyCap]; // 0..65535; boss HP well below
@@ -127,6 +136,14 @@ internal sealed partial class SimCombatState
     /// for typed access (the JIT inlines it).
     /// </summary>
     public readonly short[] EnemyPowers = new short[EnemyCap * PowersPerCre];
+
+    /// <summary>
+    /// Per-enemy mirror of <see cref="SimPowerInternal"/>. Most enemy-only
+    /// fields used here are Nemesis._shouldApplyIntangible, Ritual._wasJustAppliedByEnemy,
+    /// Illusion.isReviving, and HardenedShell.damageReceivedThisTurn (boss
+    /// hardened-shell). 6 × 14 = 84 B contiguous; one Array.Copy on clone.
+    /// </summary>
+    public readonly SimPowerInternal[] EnemyPowerInternal = new SimPowerInternal[EnemyCap];
 
     // ── Card piles (SimCard structs; 8 bytes each) ──────────────────────────────
     // SimCard wraps the CardId ushort with the seven mutable per-instance fields
@@ -162,6 +179,13 @@ internal sealed partial class SimCombatState
     // 8 B (SimPet) + 518 B (OstyPowers) = 526 B per state.
     public SimPet Osty;
     public readonly short[] OstyPowers = new short[PowersPerCre];
+
+    /// <summary>
+    /// Osty's power-internal mirror. Reserved for completeness (Osty can
+    /// theoretically host any power); in practice it stays at default for
+    /// every shipped Osty configuration.
+    /// </summary>
+    public SimPowerInternal OstyPowerInternal;
 
     // ── RNG (bit-exact mirrors of the game's per-stream System.Random instances) ─
     // 8 inline slots, indexed by SimRngSlot. Snapshot fills all 8; CopyFrom
@@ -217,6 +241,12 @@ internal sealed partial class SimCombatState
         // copied unconditionally (Exists=0 ⇒ vector is already zero from Reset).
         Osty = src.Osty;
         Array.Copy(src.OstyPowers, OstyPowers, PowersPerCre);
+        OstyPowerInternal = src.OstyPowerInternal;
+
+        // Power-internal counters. Player & Osty are single 14-byte struct copies;
+        // the enemy slice is copied below alongside the other enemy arrays where
+        // `n` is in scope.
+        PlayerPowerInternal = src.PlayerPowerInternal;
 
         // RNG state: 8 × 228 = 1824-byte struct copy (single memcpy, no allocation).
         Rngs = src.Rngs;
@@ -236,6 +266,8 @@ internal sealed partial class SimCombatState
             Array.Copy(src.EnemyIntent,     EnemyIntent,     n);
             // Flat power matrix: copy n rows of PowersPerCre shorts contiguously.
             Array.Copy(src.EnemyPowers, EnemyPowers, n * PowersPerCre);
+            // Enemy power-internal slice (14 B per enemy).
+            Array.Copy(src.EnemyPowerInternal, EnemyPowerInternal, n);
         }
 
         // Piles.
@@ -263,10 +295,13 @@ internal sealed partial class SimCombatState
         OrbSlots = default;
         OrbCount = OrbCapacity = 0;
         Osty = default;
+        OstyPowerInternal = default;
+        PlayerPowerInternal = default;
         Rngs = default;
         Array.Clear(PlayerPowers, 0, PowersPerCre);
         Array.Clear(EnemyPowers,  0, EnemyCap * PowersPerCre);
         Array.Clear(OstyPowers,   0, PowersPerCre);
+        Array.Clear(EnemyPowerInternal, 0, EnemyCap);
         Array.Clear(EnemyIntent,  0, EnemyCap);
     }
 }

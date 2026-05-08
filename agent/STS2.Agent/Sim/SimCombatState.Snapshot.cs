@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.Sts2.Core.Models.Orbs;
+using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 
 namespace STS2.Agent.Sim;
@@ -70,6 +71,11 @@ internal sealed partial class SimCombatState
         //    types would be a SimCaps violation, so we trust the registry.
         WritePowers(playerCreature.Powers, PlayerPowers);
 
+        // 5a) Player power-internal counters (Feral / Juggling / VoidForm /
+        //     Tender / Sloth / HardenedShell / Outbreak / Orbit / Automation /
+        //     Illusion / Nemesis / Ritual). Sparse 14-byte struct.
+        WritePowerInternals(playerCreature.Powers, ref PlayerPowerInternal);
+
         // 5b) Orb queue (Defect only; queue exists but stays empty for other characters).
         SnapshotOrbs(pcs.OrbQueue);
 
@@ -102,6 +108,10 @@ internal sealed partial class SimCombatState
             // Enemy's row in the flat power matrix.
             int rowBase = i * PowersPerCre;
             WritePowersRow(e.Powers, EnemyPowers, rowBase);
+
+            // Power-internal counters for this enemy (Nemesis/Ritual/Illusion
+            // mostly, plus HardenedShell on hardened bosses).
+            WritePowerInternals(e.Powers, ref EnemyPowerInternal[i]);
 
             // Intent: pick the FIRST AbstractIntent in NextMove.Intents and
             // classify it. Most monsters only have one intent per move; for
@@ -285,6 +295,47 @@ internal sealed partial class SimCombatState
             Exists    = 1,
         };
         WritePowers(pet.Powers, OstyPowers);
+        WritePowerInternals(pet.Powers, ref OstyPowerInternal);
+    }
+
+    /// <summary>
+    /// Walk a creature's power list once and copy any tracked private
+    /// counter into <paramref name="dst"/>. Pattern-matched switch dispatches
+    /// directly to the typed reflection helpers; the JIT lowers each case
+    /// to a class-tag compare + a single virtual-call-free method invocation.
+    ///
+    /// Snapshot path only — each helper does one or two FieldInfo.GetValue
+    /// calls and is fine here. Never call this from the DFS hot loop.
+    /// </summary>
+    private static void WritePowerInternals(System.Collections.Generic.IReadOnlyList<PowerModel> powers, ref SimPowerInternal dst)
+    {
+        for (int i = 0, n = powers.Count; i < n; i++)
+        {
+            switch (powers[i])
+            {
+                case FeralPower         fp: dst.FeralZeroCostAttacks       = ClampU8(SimPowerInternalReader.ReadFeralZeroCostAttacks(fp)); break;
+                case JugglingPower      jp: dst.JugglingAttacksThisTurn    = ClampU8(SimPowerInternalReader.ReadJugglingAttacks(jp));      break;
+                case VoidFormPower      vp: dst.VoidFormCardsThisTurn      = ClampU8(SimPowerInternalReader.ReadVoidFormCards(vp));        break;
+                case TenderPower        tp: dst.TenderCardsThisTurn        = ClampU8(SimPowerInternalReader.ReadTenderCardsThisTurn(tp));  break;
+                case SlothPower         sp: dst.SlothCardsThisTurn         = ClampU8(SimPowerInternalReader.ReadSlothCardsThisTurn(sp));   break;
+                case HardenedShellPower hp: dst.HardenedShellDamageThisTurn= ClampU16(SimPowerInternalReader.ReadHardenedShellDamage(hp));break;
+                case OutbreakPower      op: dst.OutbreakTimesPoisoned      = ClampU8(SimPowerInternalReader.ReadOutbreakTimesPoisoned(op));break;
+                case OrbitPower         orb:
+                    dst.OrbitEnergySpent  = ClampU16(SimPowerInternalReader.ReadOrbitEnergySpent(orb));
+                    dst.OrbitTriggerCount = ClampU16(SimPowerInternalReader.ReadOrbitTriggerCount(orb));
+                    break;
+                case AutomationPower    ap: dst.AutomationCardsLeft        = ClampU8(SimPowerInternalReader.ReadAutomationCardsLeft(ap)); break;
+                case IllusionPower      ip:
+                    if (SimPowerInternalReader.ReadIllusionIsReviving(ip)) dst.Flags |= SimPowerInternal.FlagIllusionIsReviving;
+                    break;
+                case NemesisPower       np:
+                    if (SimPowerInternalReader.ReadNemesisShouldApplyIntangible(np)) dst.Flags |= SimPowerInternal.FlagNemesisShouldApplyIntangible;
+                    break;
+                case RitualPower        rp:
+                    if (SimPowerInternalReader.ReadRitualWasJustAppliedByEnemy(rp)) dst.Flags |= SimPowerInternal.FlagRitualWasJustAppliedByEnemy;
+                    break;
+            }
+        }
     }
 
     /// <summary>
