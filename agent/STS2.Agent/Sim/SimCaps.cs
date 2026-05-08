@@ -178,6 +178,26 @@ internal static class SimCaps
                 ". Add typeof(...) → SimOrbType.Xxx entries and bump SimOrbType.Count.");
         }
 
+        // ── 8. Force-resolve every reflection FieldInfo in SimPowerInternalReader.
+        //    Each field handle is a `static readonly FieldInfo` initialized via
+        //    typeof(T).GetField(...) ?? throw — so touching the type's static
+        //    ctor verifies that all 13 hidden fields (FeralPower.Data.zeroCostAttacksPlayed,
+        //    JugglingPower.Data.attacksPlayedThisTurn, OrbitPower.Data.energySpent,
+        //    AutomationPower.Data.cardsLeft, IllusionPower.Data.isReviving,
+        //    HardenedShellPower.Data.damageReceivedThisTurn, OutbreakPower.Data.timesPoisoned,
+        //    VoidFormPower.Data.cardsPlayedThisTurn, PowerModel._internalData,
+        //    TenderPower._cardsPlayedThisTurn, SlothPower._cardsPlayedThisTurn,
+        //    NemesisPower._shouldApplyIntangible, RitualPower._wasJustAppliedByEnemy)
+        //    are still present in the live game assembly. Without this trigger
+        //    the resolution would happen lazily in WritePowerInternals only when
+        //    a real instance of the power is encountered, so a shipped game
+        //    rename could go undetected for many combats.
+        //
+        //    `RuntimeHelpers.RunClassConstructor` runs the static ctor exactly
+        //    once and propagates any thrown exception to here.
+        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
+            typeof(SimPowerInternalReader).TypeHandle);
+
         // All invariants hold. (Worst-case encounter is informational only.)
         _ = worstEncounter; _ = worstSlots;
     }
