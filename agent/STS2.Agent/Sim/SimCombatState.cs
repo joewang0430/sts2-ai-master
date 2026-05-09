@@ -75,7 +75,7 @@ internal sealed partial class SimCombatState
     // CardEnergyModifierCap: flat pool of exact local energy-cost modifiers
     // keyed by SimCard.InstanceId. 2048 entries gives >3 modifiers per live
     // card on average, which is ample headroom for shipped content while
-    // staying under 6 KB because SimLocalCostModifier is 3 bytes.
+    // staying at 4 KB because SimLocalCostModifier is 2 bytes.
     public const int CardEnergyModifierCap = 2048;
 
     // PowersPerCre: Mirrors SimPowerType.Count = 259, exactly one slot per concrete
