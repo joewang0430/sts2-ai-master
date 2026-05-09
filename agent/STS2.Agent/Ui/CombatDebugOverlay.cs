@@ -714,48 +714,58 @@ internal static class CombatDebugOverlay
 
         if (pcs is not null)
         {
+            int simHandCount = blobReady ? _blob.HandCount : _sim.HandCount;
             Cmp("Energy",    _sim.Energy,    pcs.Energy);
             Cmp("MaxEnergy", _sim.MaxEnergy, pcs.MaxEnergy);
-            Cmp("HandN",     _sim.HandCount,    pcs.Hand.Cards.Count);
+            Cmp("HandN",     simHandCount,      pcs.Hand.Cards.Count);
             Cmp("DrawN",     _sim.DrawCount,    pcs.DrawPile.Cards.Count);
             Cmp("DiscN",     _sim.DiscCount,    pcs.DiscardPile.Cards.Count);
             Cmp("ExhN",      _sim.ExhaustCount, pcs.ExhaustPile.Cards.Count);
 
-            // Check each hand card's type+upgrade flag.
-            int hn = Math.Min(_sim.HandCount, pcs.Hand.Cards.Count);
+            // First blob consumption path: read hand card hot data from the
+            // frozen blob when it is available, otherwise fall back to legacy.
+            Span<SimCard> blobHand = _blob.HandCards;
+            int hn = Math.Min(simHandCount, pcs.Hand.Cards.Count);
             for (int i = 0; i < hn; i++)
             {
-                ref var sc = ref _sim.Hand[i];
-                                CardModel liveCard = pcs.Hand.Cards[i];
+                SimCard sc = blobReady ? blobHand[i] : _sim.Hand[i];
+                CardModel liveCard = pcs.Hand.Cards[i];
                 bool   simU = sc.IsUpgraded;
-                                bool   livU = liveCard.IsUpgraded;
+                bool   livU = liveCard.IsUpgraded;
                 ushort sid  = sc.BaseCardId;
                 string simN = ReverseCardName(sid);
-                                string livN = liveCard.GetType().Name;
+                string livN = liveCard.GetType().Name;
 
-                                int  simLocalCost = SimCardEnergyOps.GetWithLocalModifiers(_sim, sc);
-                                int  liveLocalCost = liveCard.EnergyCost.GetWithModifiers(CostModifiers.Local);
-                                bool simHasLocal = SimCardEnergyOps.GetModifierCount(_sim, sc) > 0;
-                                bool liveHasLocal = liveCard.EnergyCost.HasLocalModifiers;
-                                bool simX = sc.HasEnergyCostX;
-                                bool liveX = liveCard.EnergyCost.CostsX;
-                                int  simCapturedX = simX ? SimCardEnergyOps.GetCapturedXValue(_sim, sc) : 0;
-                                int  liveCapturedX = liveX ? liveCard.EnergyCost.CapturedXValue : 0;
+                int  simLocalCost = blobReady
+                    ? SimCardEnergyOps.GetWithLocalModifiers(_blob, sc)
+                    : SimCardEnergyOps.GetWithLocalModifiers(_sim, sc);
+                int  liveLocalCost = liveCard.EnergyCost.GetWithModifiers(CostModifiers.Local);
+                bool simHasLocal = (blobReady
+                    ? SimCardEnergyOps.GetModifierCount(_blob, sc)
+                    : SimCardEnergyOps.GetModifierCount(_sim, sc)) > 0;
+                bool liveHasLocal = liveCard.EnergyCost.HasLocalModifiers;
+                bool simX = sc.HasEnergyCostX;
+                bool liveX = liveCard.EnergyCost.CostsX;
+                int  simCapturedX = !simX ? 0
+                    : blobReady
+                        ? SimCardEnergyOps.GetCapturedXValue(_blob, sc)
+                        : SimCardEnergyOps.GetCapturedXValue(_sim, sc);
+                int  liveCapturedX = liveX ? liveCard.EnergyCost.CapturedXValue : 0;
 
-                                bool ok = simN == livN
-                                             && simU == livU
-                                             && simLocalCost == liveLocalCost
-                                             && simHasLocal == liveHasLocal
-                                             && simX == liveX
-                                             && simCapturedX == liveCapturedX;
+                bool ok = simN == livN
+                             && simU == livU
+                             && simLocalCost == liveLocalCost
+                             && simHasLocal == liveHasLocal
+                             && simX == liveX
+                             && simCapturedX == liveCapturedX;
                 if (!ok) simAllOk = false;
                 simSb.AppendLine(ok
-                                        ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}" +
-                                            $" costL={simLocalCost}{(simHasLocal ? "*" : "")}{(simX ? $" X={simCapturedX}" : string.Empty)}"
-                                        : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
-                                            $" costL sim={simLocalCost}{(simHasLocal ? "*" : "")}" +
-                                            $" live={liveLocalCost}{(liveHasLocal ? "*" : "")}" +
-                                            $" X sim={simCapturedX} live={liveCapturedX}");
+                    ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}" +
+                        $" costL={simLocalCost}{(simHasLocal ? "*" : "")}{(simX ? $" X={simCapturedX}" : string.Empty)}"
+                    : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
+                        $" costL sim={simLocalCost}{(simHasLocal ? "*" : "")}" +
+                        $" live={liveLocalCost}{(liveHasLocal ? "*" : "")}" +
+                        $" X sim={simCapturedX} live={liveCapturedX}");
             }
 
             // Bulk pile diff: scan every card, summarize. A full per-card dump

@@ -15,12 +15,24 @@ internal static class SimCardEnergyOps
         => state.CardEnergyBaseCost[card.InstanceId];
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetBaseCost(CombatNodeBlob blob, in SimCard card)
+        => blob.CardEnergyBaseCost[card.InstanceId];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetCapturedXValue(SimCombatState state, in SimCard card)
         => state.CardEnergyCapturedX[card.InstanceId];
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetCapturedXValue(CombatNodeBlob blob, in SimCard card)
+        => blob.CardEnergyCapturedX[card.InstanceId];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetModifierCount(SimCombatState state, in SimCard card)
         => state.CardEnergyModifierCount[card.InstanceId];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetModifierCount(CombatNodeBlob blob, in SimCard card)
+        => blob.CardEnergyModifierCount[card.InstanceId];
 
     /// <summary>
     /// Mirror of CardEnergyCost.GetWithModifiers(CostModifiers.Local).
@@ -41,9 +53,32 @@ internal static class SimCardEnergyOps
         return cost < 0 ? 0 : cost;
     }
 
+    /// <summary>
+    /// Blob-backed mirror of CardEnergyCost.GetWithModifiers(CostModifiers.Local).
+    /// This is the first production read path that consumes the frozen card
+    /// slice directly instead of going back through legacy SimCombatState.
+    /// </summary>
+    public static int GetWithLocalModifiers(CombatNodeBlob blob, in SimCard card)
+    {
+        int cost = GetBaseCost(blob, card);
+        if (cost < 0) return cost;
+        if (card.HasEnergyCostX) return cost;
+
+        int start = blob.CardEnergyModifierStart[card.InstanceId];
+        int count = blob.CardEnergyModifierCount[card.InstanceId];
+        for (int i = 0; i < count; i++)
+            cost = Apply(blob.CardEnergyModifiers[start + i], cost);
+
+        return cost < 0 ? 0 : cost;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetResolved(SimCombatState state, in SimCard card)
         => card.HasEnergyCostX ? GetCapturedXValue(state, card) : GetWithLocalModifiers(state, card);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetResolved(CombatNodeBlob blob, in SimCard card)
+        => card.HasEnergyCostX ? GetCapturedXValue(blob, card) : GetWithLocalModifiers(blob, card);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetAmountToSpend(SimCombatState state, in SimCard card)
