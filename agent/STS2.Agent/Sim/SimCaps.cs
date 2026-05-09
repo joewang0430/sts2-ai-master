@@ -221,7 +221,23 @@ internal static class SimCaps
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(SimPowerInternalReader).TypeHandle);
 
-        // ── 9. Force initialization of SimMonsterStateRegistry. Its two
+        // ── 9. Force initialization of RandomStateOps. Its static field
+        //    chain resolves System.Random internals (_impl/_prng/_seedArray/
+        //    _inext/_inextp) plus the game's Rng._random bridge. Blob snapshot
+        //    uses this for all 8 combat RNG streams; if the .NET or game-side
+        //    layout drifts, fail at startup rather than on first combat diff.
+        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
+            typeof(RandomStateOps).TypeHandle);
+
+        // ── 10. Force initialization of CombatNodeBlobSnapshot so the
+        //    CardEnergyCost._localModifiers reflection handle is resolved up
+        //    front. Blob snapshot depends on this exact field for card-energy
+        //    sidecar capture; a rename should crash at startup, not only when
+        //    the first combat hand is read.
+        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
+            typeof(CombatNodeBlobSnapshot).TypeHandle);
+
+        // ── 11. Force initialization of SimMonsterStateRegistry. Its two
         //    `static readonly FieldInfo` slots resolve
         //    MonsterMoveStateMachine._currentState and ._performedFirstMove
         //    via reflection with `?? throw`. Without an explicit nudge they
