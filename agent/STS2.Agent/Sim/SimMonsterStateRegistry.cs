@@ -128,6 +128,10 @@ internal sealed class MonsterStateTable
 internal static class SimMonsterStateRegistry
 {
     private static readonly ConcurrentDictionary<Type, MonsterStateTable> _tables = new();
+    private static readonly object _handleGate = new();
+    private static readonly Dictionary<MonsterStateTable, ushort> _handlesByTable = new();
+    private static readonly Dictionary<Type, ushort> _handlesByType = new();
+    private static readonly List<MonsterStateTable?> _tablesByHandle = new() { null };
 
     /// <summary>Reflected handle to <c>MonsterMoveStateMachine._currentState</c>.
     /// Resolved at static-ctor time; throws on null so a game-source rename is
@@ -162,7 +166,41 @@ internal static class SimMonsterStateRegistry
         // ConcurrentDictionary.GetOrAdd may invoke the factory more than once
         // under contention, but the result is idempotent (Type-keyed singleton)
         // and our mod is single-threaded at snapshot time; either way, fine.
-        return _tables.GetOrAdd(t, _ => new MonsterStateTable(t, sm));
+        MonsterStateTable table = _tables.GetOrAdd(t, _ => new MonsterStateTable(t, sm));
+        EnsureHandle(t, table);
+        return table;
+    }
+
+    public static ushort GetHandle(MonsterStateTable? table)
+    {
+        if (table == null)
+            return 0;
+
+        lock (_handleGate)
+        {
+            if (_handlesByTable.TryGetValue(table, out ushort handle))
+                return handle;
+        }
+
+        throw new InvalidOperationException(
+            "SimMonsterStateRegistry: MonsterStateTable handle requested before registration.");
+    }
+
+    public static MonsterStateTable? Resolve(ushort handle)
+    {
+        if (handle == 0)
+            return null;
+
+        lock (_handleGate)
+        {
+            if ((uint)handle >= (uint)_tablesByHandle.Count)
+            {
+                throw new InvalidOperationException(
+                    $"SimMonsterStateRegistry: invalid MonsterStateTable handle {handle}.");
+            }
+
+            return _tablesByHandle[handle];
+        }
     }
 
     /// <summary>Reflection read of the private <c>_currentState</c> field.
@@ -173,4 +211,28 @@ internal static class SimMonsterStateRegistry
     /// <summary>Reflection read of the private <c>_performedFirstMove</c> field.</summary>
     public static bool GetPerformedFirstMove(MonsterMoveStateMachine sm)
         => (bool)_performedFirstMoveField.GetValue(sm)!;
+
+    private static void EnsureHandle(Type monsterType, MonsterStateTable table)
+    {
+        lock (_handleGate)
+        {
+            if (_handlesByType.TryGetValue(monsterType, out ushort existingHandle))
+            {
+                if (!_handlesByTable.ContainsKey(table))
+                    _handlesByTable.Add(table, existingHandle);
+                return;
+            }
+
+            if (_tablesByHandle.Count > ushort.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    "SimMonsterStateRegistry: MonsterStateTable handle space exhausted.");
+            }
+
+            ushort handle = (ushort)_tablesByHandle.Count;
+            _handlesByType.Add(monsterType, handle);
+            _handlesByTable.Add(table, handle);
+            _tablesByHandle.Add(table);
+        }
+    }
 }

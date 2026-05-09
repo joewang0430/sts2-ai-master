@@ -5,8 +5,7 @@
 /// Alphabetical by class name. 577 entries (= 577 .cs files in MegaCrit.Sts2.Core.Models.Cards).
 ///
 /// IDs are <c>ushort</c> because 577 &gt; 256 (must be wider than byte) but well under
-/// 65,535. Fits the <c>ushort[] Hand/Draw/Disc/Exhaust</c> piles in SimCombatState
-/// without sign-extension or boxing.
+/// 65,535. Fits the blob card-pile slices without sign-extension or boxing.
 /// </summary>
 internal static class SimCardId
 {

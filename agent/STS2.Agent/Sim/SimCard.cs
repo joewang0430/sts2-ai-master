@@ -45,7 +45,7 @@ namespace STS2.Agent.Sim;
 ///
 /// <para><b>No reference fields</b>: this is unmanaged, so <c>SimCard[]</c>
 /// can be cloned via <see cref="System.Array.Copy(System.Array,System.Array,int)"/>
-/// (compiles to a vectorized memmove) and the whole <see cref="SimCombatState"/>
+/// (compiles to a vectorized memmove) and the full blob-backed card slice
 /// remains GC-trace-free.</para>
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 13)]

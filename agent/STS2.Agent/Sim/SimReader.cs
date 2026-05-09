@@ -6,7 +6,7 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Boundary helpers: extract minimal sim-relevant scalars from real game objects.
-/// Kept here (not on SimCombatState) so the pure data class stays game-agnostic.
+/// Kept here so the frozen data layouts stay game-agnostic.
 ///
 /// Power matching is by class-name string to avoid hard-linking against every
 /// PowerModel subclass. STS2 power class names are stable across patches.

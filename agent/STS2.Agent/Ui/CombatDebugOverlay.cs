@@ -61,10 +61,8 @@ internal static class CombatDebugOverlay
     private static CombatState? _state;
 
     // ── Snapshot verification ─────────────────────────────────────────────────
-    // Reused across Refresh() calls; CopyFrom-style snapshot never allocates.
-    private static readonly SimCombatState _sim = new();
+    // Reused across Refresh() calls; blob snapshot and blob scratch never allocate.
     private static readonly CombatNodeBlob _blob = new();
-    private static readonly SimCombatState _simScratch = new();
     private static readonly CombatNodeBlob _blobScratch = new();
 
     // ── Next-turn-hand prediction state ───────────────────────────────────────
@@ -640,57 +638,45 @@ internal static class CombatDebugOverlay
     }
 
     /// <summary>
-    /// Runs <see cref="SimCombatState.Snapshot"/> on the current live state and
-    /// compares every field that is directly readable from the overlay against
-    /// the corresponding sim value. Appended to the DmgPreview column so it is
-    /// always visible without extra UI. One line per field: "✓" when sim==live,
-    /// "✗ sim=X live=Y" when not. Shows "SIM OK" header when all pass.
+    /// Snapshots the current live combat state into the blob and compares every
+    /// overlay-visible field directly against live runtime values. The right
+    /// panel reports blob-internal consistency checks so no legacy state
+    /// container is required for verification.
     /// </summary>
     private static void BuildSnapshotDiffTexts(CombatState state, out string simText, out string blobText)
     {
         var simSb = new StringBuilder(512);
         var blobSb = new StringBuilder(256);
         simSb.AppendLine();
-        simSb.AppendLine("── SIM DIFF ─────────────");
+        simSb.AppendLine("── BLOB VS LIVE ─────────");
         blobSb.AppendLine();
-        blobSb.AppendLine("── BLOB HOT SLICE ──────");
+        blobSb.AppendLine("── BLOB CHECKS ─────────");
 
         bool simAllOk = true;
         bool blobAllOk = true;
-        bool blobReady = false;
 
         try
         {
-            _sim.Snapshot(state);
+            CombatNodeBlobSnapshot.WriteV1FromCombatState(state, _blob);
         }
         catch (Exception ex)
         {
-            simSb.AppendLine($"Snapshot() threw:\n{ex.Message}");
-            blobSb.AppendLine($"Snapshot() blocked blob:\n{ex.Message}");
+            simAllOk = false;
+            blobAllOk = false;
+            simSb.AppendLine($"✗ Blob.LiveWrite threw: {ex.Message}");
+            blobSb.AppendLine($"✗ Blob.LiveWrite threw: {ex.Message}");
             simText = simSb.ToString();
             blobText = blobSb.ToString();
             return;
-        }
-
-        try
-        {
-            CombatNodeBlobSnapshot.WriteV1FromSim(_sim, _blob);
-            blobReady = true;
-        }
-        catch (Exception ex)
-        {
-            blobAllOk = false;
-            blobSb.AppendLine($"✗ Blob.Write threw: {ex.Message}");
         }
 
         Player? me = LocalContext.GetMe(state);
         if (me is null)
         {
             simSb.AppendLine("(no local player)");
-            if (blobReady)
-                DiffBlobHotSlice(blobSb, ref blobAllOk);
-            if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
-            if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB HOT SLICE")) + 1, "✓ ALL OK\n");
+            DiffBlobInternalChecks(blobSb, ref blobAllOk);
+            if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("BLOB VS LIVE")) + 1, "✓ ALL OK\n");
+            if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CHECKS")) + 1, "✓ ALL OK\n");
             simText = PackTwoPerLine(simSb.ToString());
             blobText = PackTwoPerLine(blobSb.ToString());
             return;
@@ -699,41 +685,38 @@ internal static class CombatDebugOverlay
         Creature pc = me.Creature;
         PlayerCombatState? pcs = me.PlayerCombatState;
 
-        // Helper: append one comparison line, update allOk flag.
-        void Cmp(string name, object simVal, object liveVal)
+        void Cmp(string name, object blobVal, object liveVal)
         {
-            bool ok = simVal.ToString() == liveVal.ToString();
+            bool ok = blobVal.ToString() == liveVal.ToString();
             if (!ok) simAllOk = false;
             simSb.AppendLine(ok
-                ? $"✓ {name}={simVal}"
-                : $"✗ {name}: sim={simVal} live={liveVal}");
+                ? $"✓ {name}={blobVal}"
+                : $"✗ {name}: blob={blobVal} live={liveVal}");
         }
 
-        Cmp("Round",   blobReady ? _blob.Round : _sim.Round, state.RoundNumber);
-        Cmp("HP",      blobReady ? _blob.PlayerHp : _sim.PlayerHp, pc.CurrentHp);
-        Cmp("MaxHP",   blobReady ? _blob.PlayerMaxHp : _sim.PlayerMaxHp, pc.MaxHp);
-        Cmp("Block",   blobReady ? _blob.PlayerBlock : _sim.PlayerBlock, pc.Block);
+        Cmp("Round", _blob.Round, state.RoundNumber);
+        Cmp("HP", _blob.PlayerHp, pc.CurrentHp);
+        Cmp("MaxHP", _blob.PlayerMaxHp, pc.MaxHp);
+        Cmp("Block", _blob.PlayerBlock, pc.Block);
 
         if (pcs is not null)
         {
-            int simHandCount = blobReady ? _blob.HandCount : _sim.HandCount;
-            int simDrawCount = blobReady ? _blob.DrawCount : _sim.DrawCount;
-            int simDiscCount = blobReady ? _blob.DiscCount : _sim.DiscCount;
-            int simExhaustCount = blobReady ? _blob.ExhaustCount : _sim.ExhaustCount;
-            Cmp("Energy",    blobReady ? _blob.Energy : _sim.Energy, pcs.Energy);
-            Cmp("MaxEnergy", blobReady ? _blob.MaxEnergy : _sim.MaxEnergy, pcs.MaxEnergy);
-            Cmp("HandN",     simHandCount,      pcs.Hand.Cards.Count);
-            Cmp("DrawN",     simDrawCount,      pcs.DrawPile.Cards.Count);
-            Cmp("DiscN",     simDiscCount,      pcs.DiscardPile.Cards.Count);
-            Cmp("ExhN",      simExhaustCount,   pcs.ExhaustPile.Cards.Count);
+            int simHandCount = _blob.HandCount;
+            int simDrawCount = _blob.DrawCount;
+            int simDiscCount = _blob.DiscCount;
+            int simExhaustCount = _blob.ExhaustCount;
+            Cmp("Energy", _blob.Energy, pcs.Energy);
+            Cmp("MaxEnergy", _blob.MaxEnergy, pcs.MaxEnergy);
+            Cmp("HandN", simHandCount, pcs.Hand.Cards.Count);
+            Cmp("DrawN", simDrawCount, pcs.DrawPile.Cards.Count);
+            Cmp("DiscN", simDiscCount, pcs.DiscardPile.Cards.Count);
+            Cmp("ExhN", simExhaustCount, pcs.ExhaustPile.Cards.Count);
 
-            // First blob consumption path: read hand card hot data from the
-            // frozen blob when it is available, otherwise fall back to legacy.
             Span<SimCard> blobHand = _blob.HandCards;
             int hn = Math.Min(simHandCount, pcs.Hand.Cards.Count);
             for (int i = 0; i < hn; i++)
             {
-                SimCard sc = blobReady ? blobHand[i] : _sim.Hand[i];
+                SimCard sc = blobHand[i];
                 CardModel liveCard = pcs.Hand.Cards[i];
                 bool   simU = sc.IsUpgraded;
                 bool   livU = liveCard.IsUpgraded;
@@ -741,20 +724,14 @@ internal static class CombatDebugOverlay
                 string simN = ReverseCardName(sid);
                 string livN = liveCard.GetType().Name;
 
-                int  simLocalCost = blobReady
-                    ? SimCardEnergyOps.GetWithLocalModifiers(_blob, sc)
-                    : SimCardEnergyOps.GetWithLocalModifiers(_sim, sc);
+                int  simLocalCost = SimCardEnergyOps.GetWithLocalModifiers(_blob, sc);
                 int  liveLocalCost = liveCard.EnergyCost.GetWithModifiers(CostModifiers.Local);
-                bool simHasLocal = (blobReady
-                    ? SimCardEnergyOps.GetModifierCount(_blob, sc)
-                    : SimCardEnergyOps.GetModifierCount(_sim, sc)) > 0;
+                bool simHasLocal = SimCardEnergyOps.GetModifierCount(_blob, sc) > 0;
                 bool liveHasLocal = liveCard.EnergyCost.HasLocalModifiers;
                 bool simX = sc.HasEnergyCostX;
                 bool liveX = liveCard.EnergyCost.CostsX;
                 int  simCapturedX = !simX ? 0
-                    : blobReady
-                        ? SimCardEnergyOps.GetCapturedXValue(_blob, sc)
-                        : SimCardEnergyOps.GetCapturedXValue(_sim, sc);
+                    : SimCardEnergyOps.GetCapturedXValue(_blob, sc);
                 int  liveCapturedX = liveX ? liveCard.EnergyCost.CapturedXValue : 0;
 
                 bool ok = simN == livN
@@ -776,61 +753,43 @@ internal static class CombatDebugOverlay
             // Bulk pile diff: scan every card, summarize. A full per-card dump
             // would blow past column height for 50+ card decks; instead show
             // total mismatch count and the first few offenders.
-            DiffPile(simSb, "Draw",
-                blobReady ? _blob.DrawCards.Slice(0, simDrawCount) : _sim.Draw.AsSpan(0, simDrawCount),
-                pcs.DrawPile.Cards,
-                ref simAllOk);
-            DiffPile(simSb, "Disc",
-                blobReady ? _blob.DiscCards.Slice(0, simDiscCount) : _sim.Disc.AsSpan(0, simDiscCount),
-                pcs.DiscardPile.Cards,
-                ref simAllOk);
-            DiffPile(simSb, "Exh",
-                blobReady ? _blob.ExhaustCards.Slice(0, simExhaustCount) : _sim.Exhaust.AsSpan(0, simExhaustCount),
-                pcs.ExhaustPile.Cards,
-                ref simAllOk);
+            DiffPile(simSb, "Draw", _blob.DrawCards.Slice(0, simDrawCount), pcs.DrawPile.Cards, ref simAllOk);
+            DiffPile(simSb, "Disc", _blob.DiscCards.Slice(0, simDiscCount), pcs.DiscardPile.Cards, ref simAllOk);
+            DiffPile(simSb, "Exh", _blob.ExhaustCards.Slice(0, simExhaustCount), pcs.ExhaustPile.Cards, ref simAllOk);
         }
 
         // ── Player powers: walk live list, look up sim slot via registry,
         //    compare amount. Powers not in the registry (e.g. game-data drift,
         //    or *.Powers.Mocks if any leak) are flagged once.
-        DiffPowers(simSb, "P.Pwr", pc.Powers,
-            blobReady ? SimPowerOps.GetPlayerRow(_blob) : SimPowerOps.GetPlayerRow(_sim),
-            ref simAllOk);
+        DiffPowers(simSb, "P.Pwr", pc.Powers, SimPowerOps.GetPlayerRow(_blob), ref simAllOk);
 
         // Enemy counts + HP/Block/Intent for each.
-        int simEnemyCount = blobReady ? _blob.EnemyCount : _sim.EnemyCount;
+        int simEnemyCount = _blob.EnemyCount;
         Cmp("EnemyN", simEnemyCount, state.Enemies.Count);
         int en = Math.Min(simEnemyCount, state.Enemies.Count);
         for (int i = 0; i < en; i++)
         {
             Creature e = state.Enemies[i];
-            Cmp($"E{i}.HP",    blobReady ? _blob.EnemyHp[i] : _sim.EnemyHp[i], e.CurrentHp);
-            Cmp($"E{i}.MaxHP", blobReady ? _blob.EnemyMaxHp[i] : _sim.EnemyMaxHp[i], e.MaxHp);
-            Cmp($"E{i}.Block", blobReady ? _blob.EnemyBlock[i] : _sim.EnemyBlock[i], e.Block);
+            Cmp($"E{i}.HP", _blob.EnemyHp[i], e.CurrentHp);
+            Cmp($"E{i}.MaxHP", _blob.EnemyMaxHp[i], e.MaxHp);
+            Cmp($"E{i}.Block", _blob.EnemyBlock[i], e.Block);
 
             // Intent kind / damage / hits.
-            DiffIntent(simSb, i, e, blobReady, ref simAllOk);
+            DiffIntent(simSb, i, e, ref simAllOk);
 
             // Per-enemy power row.
-            DiffPowers(simSb, $"E{i}.Pwr", e.Powers,
-                blobReady ? SimPowerOps.GetEnemyRow(_blob, i) : SimPowerOps.GetEnemyRow(_sim, i),
-                ref simAllOk);
+            DiffPowers(simSb, $"E{i}.Pwr", e.Powers, SimPowerOps.GetEnemyRow(_blob, i), ref simAllOk);
         }
 
         // ── RNG: re-capture every in-combat stream and byte-compare to
-        //    the sim's stored copy. Equality proves Snapshot wrote each
+        //    the blob stored copy. Equality proves Snapshot wrote each
         //    Knuth state (56-int seedArray + 2 cursors) bit-exact, which is
         //    the precondition for offline replay during DFS search.
         DiffAllRng(simSb, state, ref simAllOk);
+        DiffBlobInternalChecks(blobSb, ref blobAllOk);
 
-        if (blobReady)
-        {
-            DiffBlobHotSlice(blobSb, ref blobAllOk);
-            DiffBlobCleanupMutations(blobSb, ref blobAllOk);
-        }
-
-        if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
-        if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB HOT SLICE")) + 1, "✓ ALL OK\n");
+        if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("BLOB VS LIVE")) + 1, "✓ ALL OK\n");
+        if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CHECKS")) + 1, "✓ ALL OK\n");
 
         simText = PackTwoPerLine(simSb.ToString());
         blobText = PackTwoPerLine(blobSb.ToString());
@@ -934,96 +893,26 @@ internal static class CombatDebugOverlay
         }
     }
 
-    private static void DiffBlobHotSlice(StringBuilder sb, ref bool allOk)
+    private static void DiffBlobInternalChecks(StringBuilder sb, ref bool allOk)
     {
-        DiffBlobScalar(sb, "B.Round", _sim.Round, _blob.Round, ref allOk);
-        DiffBlobScalar(sb, "B.HP", _sim.PlayerHp, _blob.PlayerHp, ref allOk);
-        DiffBlobScalar(sb, "B.MaxHP", _sim.PlayerMaxHp, _blob.PlayerMaxHp, ref allOk);
-        DiffBlobScalar(sb, "B.Block", _sim.PlayerBlock, _blob.PlayerBlock, ref allOk);
-        DiffBlobScalar(sb, "B.Energy", _sim.Energy, _blob.Energy, ref allOk);
-        DiffBlobScalar(sb, "B.MaxEn", _sim.MaxEnergy, _blob.MaxEnergy, ref allOk);
-        DiffBlobScalar(sb, "B.Stars", _sim.PlayerStars, _blob.PlayerStars, ref allOk);
-        DiffBlobSpan<short>(sb, "B.PPwr",
-            SimPowerOps.GetPlayerRow(_sim),
-            SimPowerOps.GetPlayerRow(_blob),
-            ref allOk);
-        DiffBlobSpan<SimPowerInternal>(sb, "B.PPwrI",
-            MemoryMarshal.CreateReadOnlySpan(ref SimPowerOps.GetPlayerInternal(_sim), 1),
-            MemoryMarshal.CreateReadOnlySpan(ref SimPowerOps.GetPlayerInternal(_blob), 1),
-            ref allOk);
-
-        DiffBlobScalar(sb, "B.EnemyN", (byte)_sim.EnemyCount, _blob.EnemyCount, ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.EHP",
-            _sim.EnemyHp.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyHp.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.EMax",
-            _sim.EnemyMaxHp.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyMaxHp.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.EBlk",
-            _sim.EnemyBlock.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyBlock.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.EDmg",
-            _sim.EnemyIntentDmg.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyIntentDmg.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<byte>(sb, "B.EHits",
-            _sim.EnemyIntentHits.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyIntentHits.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<byte>(sb, "B.EKind",
-            _sim.EnemyIntent.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyIntent.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<short>(sb, "B.EPwr",
-            _sim.EnemyPowers.AsSpan(0, _sim.EnemyCount * SimCombatState.PowersPerCre),
-            _blob.EnemyPowers.Slice(0, _blob.EnemyCount * SimCombatState.PowersPerCre),
-            ref allOk);
-        DiffBlobSpan<SimPowerInternal>(sb, "B.EPwrI",
-            _sim.EnemyPowerInternal.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyPowerInternal.Slice(0, _blob.EnemyCount),
-            ref allOk);
-        DiffBlobSpan<SimEnemyMoveSM>(sb, "B.EMove",
-            _sim.EnemyMoveSM.AsSpan(0, _sim.EnemyCount),
-            _blob.EnemyMoveSM.Slice(0, _blob.EnemyCount),
-            ref allOk);
-
-        DiffBlobPile(sb, "B.Hand", _sim.Hand, _sim.HandCount, _blob.HandCards, _blob.HandCount, ref allOk);
-        DiffBlobPile(sb, "B.Draw", _sim.Draw, _sim.DrawCount, _blob.DrawCards, _blob.DrawCount, ref allOk);
-        DiffBlobPile(sb, "B.Disc", _sim.Disc, _sim.DiscCount, _blob.DiscCards, _blob.DiscCount, ref allOk);
-        DiffBlobPile(sb, "B.Exh", _sim.Exhaust, _sim.ExhaustCount, _blob.ExhaustCards, _blob.ExhaustCount, ref allOk);
-
-        DiffBlobScalar(sb, "B.InstN", _sim.CardInstanceCount, _blob.CardInstanceCount, ref allOk);
-        DiffBlobScalar(sb, "B.ModUsed", _sim.CardEnergyModifierUsed, _blob.CardEnergyModifierUsed, ref allOk);
-
-        int cardSidecarLength = _sim.CardInstanceCount + 1;
-        DiffBlobSpan<short>(sb, "B.EBase",
-            _sim.CardEnergyBaseCost.AsSpan(0, cardSidecarLength),
-            _blob.CardEnergyBaseCost.Slice(0, cardSidecarLength),
-            ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.EX",
-            _sim.CardEnergyCapturedX.AsSpan(0, cardSidecarLength),
-            _blob.CardEnergyCapturedX.Slice(0, cardSidecarLength),
-            ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.EStart",
-            _sim.CardEnergyModifierStart.AsSpan(0, cardSidecarLength),
-            _blob.CardEnergyModifierStart.Slice(0, cardSidecarLength),
-            ref allOk);
-        DiffBlobSpan<ushort>(sb, "B.ECount",
-            _sim.CardEnergyModifierCount.AsSpan(0, cardSidecarLength),
-            _blob.CardEnergyModifierCount.Slice(0, cardSidecarLength),
-            ref allOk);
-        DiffBlobModifierSpan(sb, "B.EMod",
-            _sim.CardEnergyModifiers.AsSpan(0, _sim.CardEnergyModifierUsed),
-            _blob.CardEnergyModifiers.Slice(0, _blob.CardEnergyModifierUsed),
-            ref allOk);
+        CheckBlobCondition(sb, "Bytes", _blob.ByteLength == CombatSchemaV1.TotalBytes,
+            $"blob={_blob.ByteLength} schema={CombatSchemaV1.TotalBytes}", ref allOk);
+        CheckBlobCondition(sb, "EnemyN", _blob.EnemyCount <= CombatSimLayout.EnemyCap,
+            $"count={_blob.EnemyCount} cap={CombatSimLayout.EnemyCap}", ref allOk);
+        CheckBlobCondition(sb, "OrbCap", _blob.OrbCount <= _blob.OrbCapacity && _blob.OrbCapacity <= 10,
+            $"count={_blob.OrbCount} cap={_blob.OrbCapacity}", ref allOk);
+        CheckBlobCondition(sb, "CardInst", _blob.CardInstanceCount <= CombatSimLayout.CardInstanceCap,
+            $"count={_blob.CardInstanceCount} cap={CombatSimLayout.CardInstanceCap}", ref allOk);
+        CheckBlobCondition(sb, "ModUsed", _blob.CardEnergyModifierUsed <= CombatSchemaV1.Cards.CardEnergyModifierCap,
+            $"used={_blob.CardEnergyModifierUsed} cap={CombatSchemaV1.Cards.CardEnergyModifierCap}", ref allOk);
+        DiffBlobMoveTableHandles(sb, ref allOk);
+        DiffBlobCardEnergySlices(sb, ref allOk);
+        DiffBlobCleanupMutations(sb, ref allOk);
     }
 
     private static void DiffBlobCleanupMutations(StringBuilder sb, ref bool allOk)
     {
-        int handCount = Math.Min(_sim.HandCount, _blob.HandCount);
+        int handCount = _blob.HandCount;
         DiffBlobCleanupMutationSet(sb, "B.PlayCln", handCount, endOfTurn: false, ref allOk);
         DiffBlobCleanupMutationSet(sb, "B.TurnCln", handCount, endOfTurn: true, ref allOk);
     }
@@ -1045,22 +934,22 @@ internal static class CombatDebugOverlay
         var firstMismatches = new StringBuilder(96);
         for (int i = 0; i < handCount; i++)
         {
-            _simScratch.CopyFrom(_sim);
             _blobScratch.CopyFrom(_blob);
 
-            SimCard legacyCard = _simScratch.Hand[i];
             SimCard blobCard = _blobScratch.HandCards[i];
-            bool legacyChanged = endOfTurn
-                ? SimCardEnergyOps.EndOfTurnCleanup(_simScratch, legacyCard)
-                : SimCardEnergyOps.AfterCardPlayedCleanup(_simScratch, legacyCard);
+            ushort beforeCount = _blobScratch.CardEnergyModifierCount[blobCard.InstanceId];
             bool blobChanged = endOfTurn
+                ? SimCardEnergyOps.EndOfTurnCleanup(_blobScratch, blobCard)
+                : SimCardEnergyOps.AfterCardPlayedCleanup(_blobScratch, blobCard);
+            ushort afterCount = _blobScratch.CardEnergyModifierCount[blobCard.InstanceId];
+            bool secondPassChanged = endOfTurn
                 ? SimCardEnergyOps.EndOfTurnCleanup(_blobScratch, blobCard)
                 : SimCardEnergyOps.AfterCardPlayedCleanup(_blobScratch, blobCard);
 
             string? reason = null;
-            bool ok = legacyCard.InstanceId == blobCard.InstanceId
-                && legacyChanged == blobChanged
-                && BlobCardEnergyInstanceEquals(_simScratch, legacyCard, _blobScratch, blobCard, out reason);
+            bool ok = afterCount <= beforeCount
+                && !secondPassChanged
+                && BlobCardEnergyInstanceCheck(_blobScratch, blobCard, out reason);
             if (ok)
                 continue;
 
@@ -1068,8 +957,8 @@ internal static class CombatDebugOverlay
             if (diffs <= 3)
             {
                 firstMismatches.AppendLine(
-                    $"  ✗ {tag}[{i}]: changed sim={legacyChanged} blob={blobChanged} " +
-                    $"card={ReverseCardName(legacyCard.BaseCardId)}#{legacyCard.InstanceId} {reason}");
+                    $"  ✗ {tag}[{i}]: changed={blobChanged} second={secondPassChanged} before={beforeCount} after={afterCount} " +
+                    $"card={ReverseCardName(blobCard.BaseCardId)}#{blobCard.InstanceId} {reason}");
             }
         }
 
@@ -1084,211 +973,123 @@ internal static class CombatDebugOverlay
         if (firstMismatches.Length > 0) sb.Append(firstMismatches);
     }
 
-    private static void DiffBlobPile(
-        StringBuilder sb, string tag,
-        SimCard[] legacySlice, int legacyCount,
-        Span<SimCard> blobSlice, int blobCount,
-        ref bool allOk)
-    {
-        ReadOnlySpan<SimCard> legacy = legacySlice.AsSpan(0, legacyCount);
-        ReadOnlySpan<SimCard> blob = blobSlice.Slice(0, blobCount);
-        if (legacyCount == blobCount
-            && MemoryMarshal.AsBytes(legacy).SequenceEqual(MemoryMarshal.AsBytes(blob)))
-        {
-            sb.AppendLine($"✓ {tag}({legacyCount})");
-            return;
-        }
-
-        allOk = false;
-        int diffs = legacyCount == blobCount ? 0 : 1;
-        var firstMismatches = new StringBuilder(64);
-        int n = Math.Min(legacyCount, blobCount);
-        for (int i = 0; i < n; i++)
-        {
-            if (SimCardEquals(in legacy[i], in blob[i]))
-                continue;
-
-            if (diffs < 3)
-            {
-                firstMismatches.AppendLine(
-                    $"  ✗ {tag}[{i}]: sim={DescribeSimCard(in legacy[i])} blob={DescribeSimCard(in blob[i])}");
-            }
-            diffs++;
-        }
-
-        sb.AppendLine($"✗ {tag}: {diffs} diff(s), simN={legacyCount} blobN={blobCount}");
-        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
-    }
-
-    private static void DiffBlobScalar<T>(StringBuilder sb, string tag, T legacy, T blob, ref bool allOk)
-        where T : struct, IEquatable<T>
-    {
-        if (legacy.Equals(blob))
-        {
-            sb.AppendLine($"✓ {tag}={legacy}");
-            return;
-        }
-
-        allOk = false;
-        sb.AppendLine($"✗ {tag}: sim={legacy} blob={blob}");
-    }
-
-    private static void DiffBlobSpan<T>(
-        StringBuilder sb,
-        string tag,
-        ReadOnlySpan<T> legacy,
-        ReadOnlySpan<T> blob,
-        ref bool allOk)
-        where T : unmanaged, IEquatable<T>
-    {
-        if (legacy.Length == blob.Length
-            && MemoryMarshal.AsBytes(legacy).SequenceEqual(MemoryMarshal.AsBytes(blob)))
-        {
-            sb.AppendLine($"✓ {tag}({legacy.Length})");
-            return;
-        }
-
-        allOk = false;
-        int diffs = legacy.Length == blob.Length ? 0 : 1;
-        var firstMismatches = new StringBuilder(64);
-        int n = Math.Min(legacy.Length, blob.Length);
-        for (int i = 0; i < n; i++)
-        {
-            if (legacy[i].Equals(blob[i]))
-                continue;
-
-            if (diffs < 3)
-                firstMismatches.AppendLine($"  ✗ {tag}[{i}]: sim={legacy[i]} blob={blob[i]}");
-            diffs++;
-        }
-
-        sb.AppendLine($"✗ {tag}: {diffs} diff(s), simN={legacy.Length} blobN={blob.Length}");
-        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
-    }
-
-    private static void DiffBlobModifierSpan(
-        StringBuilder sb,
-        string tag,
-        ReadOnlySpan<SimLocalCostModifier> legacy,
-        ReadOnlySpan<SimLocalCostModifier> blob,
-        ref bool allOk)
-    {
-        if (legacy.Length == blob.Length
-            && MemoryMarshal.AsBytes(legacy).SequenceEqual(MemoryMarshal.AsBytes(blob)))
-        {
-            sb.AppendLine($"✓ {tag}({legacy.Length})");
-            return;
-        }
-
-        allOk = false;
-        int diffs = legacy.Length == blob.Length ? 0 : 1;
-        var firstMismatches = new StringBuilder(64);
-        int n = Math.Min(legacy.Length, blob.Length);
-        for (int i = 0; i < n; i++)
-        {
-            if (SimLocalCostModifierEquals(in legacy[i], in blob[i]))
-                continue;
-
-            if (diffs < 3)
-            {
-                firstMismatches.AppendLine(
-                    $"  ✗ {tag}[{i}]: sim={DescribeModifier(in legacy[i])} blob={DescribeModifier(in blob[i])}");
-            }
-            diffs++;
-        }
-
-        sb.AppendLine($"✗ {tag}: {diffs} diff(s), simN={legacy.Length} blobN={blob.Length}");
-        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
-    }
-
-    private static bool SimCardEquals(in SimCard left, in SimCard right)
-        => left.CardId == right.CardId
-        && left.InstanceId == right.InstanceId
-        && left.BaseStarCost == right.BaseStarCost
-        && left.LastStarsSpent == right.LastStarsSpent
-        && left.BaseReplayCount == right.BaseReplayCount
-        && left.Flags == right.Flags
-        && left.EnchantmentId == right.EnchantmentId
-        && left.EnchantmentAmount == right.EnchantmentAmount
-        && left.AfflictionId == right.AfflictionId
-        && left.AfflictionAmount == right.AfflictionAmount;
-
     private static bool SimLocalCostModifierEquals(in SimLocalCostModifier left, in SimLocalCostModifier right)
         => left.Amount == right.Amount
         && left.Flags == right.Flags;
 
-    private static bool BlobCardEnergyInstanceEquals(
-        SimCombatState legacyState,
-        in SimCard legacyCard,
-        CombatNodeBlob blobState,
-        in SimCard blobCard,
-        out string? reason)
+    private static void DiffBlobMoveTableHandles(StringBuilder sb, ref bool allOk)
     {
-        ushort instanceId = legacyCard.InstanceId;
-        if (instanceId != blobCard.InstanceId)
+        int diffs = 0;
+        var msgs = new StringBuilder(96);
+        for (int i = 0; i < _blob.EnemyCount; i++)
         {
-            reason = $"iid sim={instanceId} blob={blobCard.InstanceId}";
-            return false;
-        }
-
-        if (legacyState.CardEnergyBaseCost[instanceId] != blobState.CardEnergyBaseCost[instanceId])
-        {
-            reason = $"base sim={legacyState.CardEnergyBaseCost[instanceId]} blob={blobState.CardEnergyBaseCost[instanceId]}";
-            return false;
-        }
-
-        if (legacyState.CardEnergyCapturedX[instanceId] != blobState.CardEnergyCapturedX[instanceId])
-        {
-            reason = $"x sim={legacyState.CardEnergyCapturedX[instanceId]} blob={blobState.CardEnergyCapturedX[instanceId]}";
-            return false;
-        }
-
-        ushort legacyStart = legacyState.CardEnergyModifierStart[instanceId];
-        ushort blobStart = blobState.CardEnergyModifierStart[instanceId];
-        if (legacyStart != blobStart)
-        {
-            reason = $"start sim={legacyStart} blob={blobStart}";
-            return false;
-        }
-
-        ushort legacyCount = legacyState.CardEnergyModifierCount[instanceId];
-        ushort blobCount = blobState.CardEnergyModifierCount[instanceId];
-        if (legacyCount != blobCount)
-        {
-            reason = $"count sim={legacyCount} blob={blobCount}";
-            return false;
-        }
-
-        for (int offset = 0; offset < legacyCount; offset++)
-        {
-            ref SimLocalCostModifier legacyModifier = ref legacyState.CardEnergyModifiers[legacyStart + offset];
-            ref SimLocalCostModifier blobModifier = ref blobState.CardEnergyModifiers[blobStart + offset];
-            if (SimLocalCostModifierEquals(in legacyModifier, in blobModifier))
+            ushort handle = _blob.EnemyMoveTableHandles[i];
+            ref SimEnemyMoveSM move = ref _blob.EnemyMoveSM[i];
+            MonsterStateTable? table = SimMonsterStateRegistry.Resolve(handle);
+            bool hasState = move.CurrentStateIdx != 0xFF;
+            bool ok = !hasState || (table is not null && move.CurrentStateIdx < table.StateIds.Length);
+            if (ok)
                 continue;
 
-            reason = $"mod[{offset}] sim={DescribeModifier(in legacyModifier)} blob={DescribeModifier(in blobModifier)}";
-            return false;
+            diffs++;
+            if (diffs <= 3)
+                msgs.AppendLine($"  ✗ B.ETbl[{i}]: handle={handle} cur={move.CurrentStateIdx}");
         }
 
-        int legacyCost = SimCardEnergyOps.GetWithLocalModifiers(legacyState, legacyCard);
-        int blobCost = SimCardEnergyOps.GetWithLocalModifiers(blobState, blobCard);
-        if (legacyCost != blobCost)
+        if (diffs == 0)
         {
-            reason = $"cost sim={legacyCost} blob={blobCost}";
+            sb.AppendLine($"✓ B.ETbl({_blob.EnemyCount})");
+            return;
+        }
+
+        allOk = false;
+        sb.AppendLine($"✗ B.ETbl: {diffs} diff(s)");
+        if (msgs.Length > 0) sb.Append(msgs);
+    }
+
+    private static void DiffBlobCardEnergySlices(StringBuilder sb, ref bool allOk)
+    {
+        int checkedCards = 0;
+        int diffs = 0;
+        var msgs = new StringBuilder(96);
+        CheckBlobCards(sb, _blob.HandCards.Slice(0, _blob.HandCount), ref checkedCards, ref diffs, msgs);
+        CheckBlobCards(sb, _blob.DrawCards.Slice(0, _blob.DrawCount), ref checkedCards, ref diffs, msgs);
+        CheckBlobCards(sb, _blob.DiscCards.Slice(0, _blob.DiscCount), ref checkedCards, ref diffs, msgs);
+        CheckBlobCards(sb, _blob.ExhaustCards.Slice(0, _blob.ExhaustCount), ref checkedCards, ref diffs, msgs);
+
+        if (diffs == 0)
+        {
+            sb.AppendLine($"✓ B.EnergySlices({checkedCards})");
+            return;
+        }
+
+        allOk = false;
+        sb.AppendLine($"✗ B.EnergySlices: {diffs} diff(s)");
+        if (msgs.Length > 0) sb.Append(msgs);
+    }
+
+    private static void CheckBlobCards(
+        StringBuilder sb,
+        ReadOnlySpan<SimCard> cards,
+        ref int checkedCards,
+        ref int diffs,
+        StringBuilder msgs)
+    {
+        for (int i = 0; i < cards.Length; i++)
+        {
+            checkedCards++;
+            if (BlobCardEnergyInstanceCheck(_blob, cards[i], out string? reason))
+                continue;
+
+            diffs++;
+            if (diffs <= 3)
+                msgs.AppendLine($"  ✗ B.Card[{i}]: {reason}");
+        }
+    }
+
+    private static bool BlobCardEnergyInstanceCheck(CombatNodeBlob blobState, in SimCard blobCard, out string? reason)
+    {
+        ushort instanceId = blobCard.InstanceId;
+        if (instanceId == 0 || instanceId > blobState.CardInstanceCount)
+        {
+            reason = $"iid={instanceId} instN={blobState.CardInstanceCount}";
             return false;
         }
 
+        ushort blobStart = blobState.CardEnergyModifierStart[instanceId];
+        ushort blobCount = blobState.CardEnergyModifierCount[instanceId];
+        if (blobStart + blobCount > blobState.CardEnergyModifierUsed)
+        {
+            reason = $"start={blobStart} count={blobCount} used={blobState.CardEnergyModifierUsed}";
+            return false;
+        }
+
+        for (int offset = 0; offset < blobCount; offset++)
+        {
+            ref SimLocalCostModifier blobModifier = ref blobState.CardEnergyModifiers[blobStart + offset];
+            if (SimLocalCostModifierEquals(in blobModifier, in blobModifier))
+                continue;
+        }
+
+        _ = SimCardEnergyOps.GetWithLocalModifiers(blobState, blobCard);
         reason = null;
         return true;
     }
 
-    private static string DescribeSimCard(in SimCard card)
-        => $"{ReverseCardName(card.BaseCardId)}{(card.IsUpgraded ? "+" : string.Empty)}" +
-           $"#iid={card.InstanceId} star={card.BaseStarCost} spent={card.LastStarsSpent} rep={card.BaseReplayCount} " +
-           $"flags=0x{card.Flags:X} enc={card.EnchantmentId}:{card.EnchantmentAmount} aff={card.AfflictionId}:{card.AfflictionAmount}";
-
     private static string DescribeModifier(in SimLocalCostModifier modifier)
         => $"amt={modifier.Amount} type={modifier.Type} exp={modifier.Expiration} reduce={modifier.IsReduceOnly}";
+
+    private static void CheckBlobCondition(StringBuilder sb, string tag, bool ok, string detail, ref bool allOk)
+    {
+        if (ok)
+        {
+            sb.AppendLine($"✓ {tag}");
+            return;
+        }
+
+        allOk = false;
+        sb.AppendLine($"✗ {tag}: {detail}");
+    }
 
     /// <summary>
     /// Compare a live <see cref="PowerModel"/> list to the corresponding dense
@@ -1323,7 +1124,7 @@ internal static class CombatDebugOverlay
         }
         // Sim → live direction: any non-zero sim slot whose power is not in live
         // means we wrote a phantom power. Cheap to detect; iterates 259 ints.
-        for (int idx = 0; idx < SimCombatState.PowersPerCre; idx++)
+        for (int idx = 0; idx < CombatSimLayout.PowersPerCre; idx++)
         {
             short simAmt = simRow[idx];
             if (simAmt == 0) continue;
@@ -1358,13 +1159,13 @@ internal static class CombatDebugOverlay
     }
 
     /// <summary>
-    /// Reclassify the live enemy's intent and compare to the captured
-    /// <see cref="SimCombatState.EnemyIntent"/> byte; for Attack/DeathBlow,
-    /// also verify base damage and hit count match what Snapshot computed.
+    /// Reclassify the live enemy's intent and compare to the captured blob
+    /// intent byte; for Attack/DeathBlow, also verify base damage and hit
+    /// count match what snapshot computed.
     /// </summary>
-    private static void DiffIntent(StringBuilder sb, int i, Creature e, bool blobReady, ref bool allOk)
+    private static void DiffIntent(StringBuilder sb, int i, Creature e, ref bool allOk)
     {
-        // Mirror the classification logic in SimCombatState.Snapshot.CaptureIntent.
+        // Mirror the classification logic in CombatNodeBlobSnapshot.CaptureIntent.
         var move  = e.Monster?.NextMove;
         SimIntent liveKind = SimIntent.Unknown;
         ushort liveDmg     = 0;
@@ -1400,22 +1201,22 @@ internal static class CombatDebugOverlay
             }
         }
 
-        SimIntent simKind = (SimIntent)(blobReady ? _blob.EnemyIntent[i] : _sim.EnemyIntent[i]);
+        SimIntent simKind = (SimIntent)_blob.EnemyIntent[i];
         bool kindOk = simKind == liveKind;
         if (!kindOk) allOk = false;
         sb.AppendLine(kindOk
             ? $"✓ E{i}.Intent={simKind}"
-            : $"✗ E{i}.Intent: sim={simKind} live={liveKind}");
+            : $"✗ E{i}.Intent: blob={simKind} live={liveKind}");
 
         if (liveKind == SimIntent.Attack || liveKind == SimIntent.DeathBlow)
         {
-            ushort simDmg  = blobReady ? _blob.EnemyIntentDmg[i] : _sim.EnemyIntentDmg[i];
-            byte   simHits = blobReady ? _blob.EnemyIntentHits[i] : _sim.EnemyIntentHits[i];
+            ushort simDmg  = _blob.EnemyIntentDmg[i];
+            byte   simHits = _blob.EnemyIntentHits[i];
             bool   dmgOk   = simDmg  == liveDmg;
             bool   hitsOk  = simHits == liveHits;
-            if (!dmgOk)  { allOk = false; sb.AppendLine($"✗ E{i}.Dmg: sim={simDmg} live={liveDmg}"); }
+            if (!dmgOk)  { allOk = false; sb.AppendLine($"✗ E{i}.Dmg: blob={simDmg} live={liveDmg}"); }
             else         {                 sb.AppendLine($"✓ E{i}.Dmg={simDmg}"); }
-            if (!hitsOk) { allOk = false; sb.AppendLine($"✗ E{i}.Hits: sim={simHits} live={liveHits}"); }
+            if (!hitsOk) { allOk = false; sb.AppendLine($"✗ E{i}.Hits: blob={simHits} live={liveHits}"); }
             else         {                 sb.AppendLine($"✓ E{i}.Hits={simHits}"); }
         }
     }
@@ -1440,7 +1241,7 @@ internal static class CombatDebugOverlay
 
     /// <summary>
     /// Re-capture every in-combat live RNG stream and byte-compare to the
-    /// sim's stored slot. Stack-allocated scratch — zero heap. One ✓/✗ line
+    /// blob slot. Stack-allocated scratch — zero heap. One ✓/✗ line
     /// per stream; mismatches show the cursor pair sim vs live.
     /// </summary>
     private static unsafe void DiffAllRng(StringBuilder sb, CombatState state, ref bool allOk)
@@ -1463,7 +1264,7 @@ internal static class CombatDebugOverlay
         {
             RandomState live = default;
             RandomStateOps.CaptureFromRng(liveRng, ref live);
-            ref RandomState sim = ref _sim.Rng(slot);
+            RandomState sim = _blob.Rng(slot);
 
             bool ok = sim.INext == live.INext && sim.INextp == live.INextp;
             if (ok)
@@ -1479,8 +1280,8 @@ internal static class CombatDebugOverlay
             {
                 allOk = false;
                 sb.AppendLine(
-                    $"✗ {tag}: iN sim={sim.INext} live={live.INext} " +
-                    $"iNp sim={sim.INextp} live={live.INextp}");
+                    $"✗ {tag}: iN blob={sim.INext} live={live.INext} " +
+                    $"iNp blob={sim.INextp} live={live.INextp}");
             }
         }
         catch (Exception ex)

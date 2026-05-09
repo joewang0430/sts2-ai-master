@@ -43,7 +43,7 @@ internal enum SimRngSlot : int
 /// <summary>
 /// Inline 8-element buffer of <see cref="RandomState"/>. Sized via
 /// <see cref="InlineArrayAttribute"/> so the entire 8 × 228 = 1824-byte
-/// array lives directly inside <see cref="SimCombatState"/> with zero heap
+/// array lives directly inside the blob-backed combat snapshot with zero heap
 /// indirection. Indexed with <see cref="SimRngSlot"/>:
 /// <c>ref RandomState s = ref state.Rngs[(int)SimRngSlot.Shuffle];</c>
 ///
@@ -69,7 +69,7 @@ internal struct RandomStateBuffer
 ///   int     _inext      →  int INext
 ///   int     _inextp     →  int INextp
 /// </summary>
-internal unsafe struct RandomState
+internal unsafe struct RandomState : IEquatable<RandomState>
 {
     public const int ArrLen = 56;
 
@@ -81,6 +81,36 @@ internal unsafe struct RandomState
 
     /// <summary>Mirrors System.Random+CompatPrng._inextp.</summary>
     public int INextp;
+
+    public readonly bool Equals(RandomState other)
+    {
+        if (INext != other.INext || INextp != other.INextp)
+            return false;
+
+        for (int i = 0; i < ArrLen; i++)
+        {
+            if (Arr[i] != other.Arr[i])
+                return false;
+        }
+
+        return true;
+    }
+
+    public override readonly bool Equals(object? obj)
+        => obj is RandomState other && Equals(other);
+
+    public override readonly int GetHashCode()
+    {
+        HashCode hash = new();
+        hash.Add(INext);
+        hash.Add(INextp);
+        for (int i = 0; i < ArrLen; i++)
+            hash.Add(Arr[i]);
+        return hash.ToHashCode();
+    }
+
+    public override readonly string ToString()
+        => $"iN={INext} iNp={INextp}";
 }
 
 /// <summary>

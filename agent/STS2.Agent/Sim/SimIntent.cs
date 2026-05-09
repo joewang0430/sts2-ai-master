@@ -1,7 +1,7 @@
 namespace STS2.Agent.Sim;
 
 /// <summary>
-/// One-byte enemy intent kind, stored in <c>SimCombatState.EnemyIntent[i]</c>.
+/// One-byte enemy intent kind, stored in the blob's <c>EnemyIntent[i]</c> slice.
 ///
 /// Mirrors the game's <c>MegaCrit.Sts2.Core.MonsterMoves.Intents.IntentType</c>
 /// (verified 2026-04). Values are explicit and 1:1 with the game enum so a
@@ -12,16 +12,15 @@ namespace STS2.Agent.Sim;
 /// line shared with surrounding intent fields). Today only Attack and
 /// DeathBlow carry numeric data (in <c>EnemyIntentDmg</c> / <c>EnemyIntentHits</c>);
 /// the rest are tag-only and their numeric payloads (block amount, buff stacks,
-/// debuff stacks, heal amount) are NOT yet captured. See SimCombatState
-/// docs and the staged plan for the monster-move database that will fill those
-/// in later.
+/// debuff stacks, heal amount) are NOT yet captured. See the staged plan for
+/// the monster-move database that will fill those in later.
 /// </summary>
 internal enum SimIntent : byte
 {
     /// <summary>Default / no intent visible (matches IntentType.Unknown).</summary>
     Unknown      = 0,
 
-    /// <summary>SingleAttackIntent / MultiAttackIntent. <see cref="SimCombatState.EnemyIntentDmg"/> + <see cref="SimCombatState.EnemyIntentHits"/> are valid.</summary>
+    /// <summary>SingleAttackIntent / MultiAttackIntent. <c>EnemyIntentDmg</c> + <c>EnemyIntentHits</c> are valid.</summary>
     Attack       = 1,
 
     /// <summary>BuffIntent: enemy buffs itself. Buff type & stacks not yet captured.</summary>
@@ -60,6 +59,6 @@ internal enum SimIntent : byte
     /// <summary>CardDebuffIntent: shuffles a curse card into the player's pile.</summary>
     CardDebuff   = 13,
 
-    /// <summary>DeathBlowIntent: subclass of attack that triggers special on-kill logic. <see cref="SimCombatState.EnemyIntentDmg"/> + <see cref="SimCombatState.EnemyIntentHits"/> are valid.</summary>
+    /// <summary>DeathBlowIntent: subclass of attack that triggers special on-kill logic. <c>EnemyIntentDmg</c> + <c>EnemyIntentHits</c> are valid.</summary>
     DeathBlow    = 14,
 }

@@ -5,9 +5,9 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Per-creature mirror of the private mutable counters that ~12 PowerModel
-/// subclasses keep beyond their public <c>Amount</c>. The base power matrix
-/// (<see cref="SimCombatState.PlayerPowers"/> / <c>EnemyPowers</c> /
-/// <c>OstyPowers</c>) only stores <c>Amount</c>; this struct captures the
+/// subclasses keep beyond their public <c>Amount</c>. The base power matrices
+/// (<c>PlayerPowers</c> / <c>EnemyPowers</c> / <c>OstyPowers</c>) only store
+/// <c>Amount</c>; this struct captures the
 /// extra hidden state that gates each power's trigger condition.
 ///
 /// Why a sparse named struct instead of a parallel <c>short[259]</c> matrix:

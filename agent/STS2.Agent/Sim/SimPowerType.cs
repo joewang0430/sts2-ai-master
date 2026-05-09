@@ -2,8 +2,8 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Compile-time integer indices for every PowerModel subclass in the game.
-/// Indices are dense [0, Count) and stored in <see cref="SimCombatState"/>'s
-/// per-creature <c>short[Count]</c> power vectors.
+/// Indices are dense [0, Count) and stored in the blob-backed per-creature
+/// <c>short[Count]</c> power vectors.
 ///
 /// Hot-path callers reference these as compile-time constants — e.g.
 /// <c>state.PlayerPowers[SimPowerType.Strength]</c> resolves to a single

@@ -6,10 +6,10 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Versioned byte layout for the first parallel NodeBlob prototype.
 ///
-/// V1 currently carries the full card slice, the player hot scalar+power
-/// block, and the enemy hot scalar+intent+power+move-state block. This gives
-/// us one precise, frozen layout for the highest-traffic state we need first
-/// without forcing an all-at-once rewrite of the rest of SimCombatState.
+/// V1 currently carries the full card slice, the player scalar/power/orb/pet
+/// block, the enemy hot scalar+intent+power+move-state block, and the combat
+/// RNG block. This gives us one frozen byte layout for the state slices that
+/// already exist in the live snapshot path.
 /// </summary>
 internal static class CombatSchemaV1
 {
@@ -19,7 +19,10 @@ internal static class CombatSchemaV1
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
     public static readonly int SimEnemyMoveSMSize = Unsafe.SizeOf<SimEnemyMoveSM>();
-    public static readonly int TotalBytes = Enemies.TotalBytes;
+    public static readonly int SimPetSize = Unsafe.SizeOf<SimPet>();
+    public static readonly int RandomStateSize = Unsafe.SizeOf<RandomState>();
+    public static readonly int RandomStateBufferSize = Unsafe.SizeOf<RandomStateBuffer>();
+    public static readonly int TotalBytes = Runtime.TotalBytes;
 
     static CombatSchemaV1()
     {
@@ -51,6 +54,20 @@ internal static class CombatSchemaV1
                 "Enemy move-state layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
+        if (SimPetSize != 8)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimPet size 8, got {SimPetSize}. " +
+                "Pet layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (RandomStateBufferSize != RandomStateSize * (int)SimRngSlot.Count)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: RandomStateBuffer size {RandomStateBufferSize} does not equal {RandomStateSize} * {SimRngSlot.Count}. " +
+                "RNG buffer layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
         if (Player.PlayerPowersBytes != Enemies.EnemyPowersBytes / Enemies.EnemyCap)
         {
             throw new InvalidOperationException(
@@ -61,10 +78,10 @@ internal static class CombatSchemaV1
 
     public static class Cards
     {
-        public const int HandCap = SimCombatState.HandCap;
-        public const int PileCap = SimCombatState.PileCap;
-        public const int CardInstanceCap = SimCombatState.CardInstanceCap;
-        public const int CardEnergyModifierCap = SimCombatState.CardEnergyModifierCap;
+        public const int HandCap = CombatSimLayout.HandCap;
+        public const int PileCap = CombatSimLayout.PileCap;
+        public const int CardInstanceCap = CombatSimLayout.CardInstanceCap;
+        public const int CardEnergyModifierCap = CombatSimLayout.CardEnergyModifierCap;
 
         public static readonly int HandBytes = HandCap * CombatSchemaV1.SimCardSize;
         public static readonly int DrawBytes = PileCap * CombatSchemaV1.SimCardSize;
@@ -152,7 +169,7 @@ internal static class CombatSchemaV1
 
     public static class Player
     {
-        public static readonly int PlayerPowersBytes = SimCombatState.PowersPerCre * sizeof(short);
+        public static readonly int PlayerPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
         public static readonly int PlayerPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
 
         public static readonly int RoundOffset;
@@ -205,7 +222,7 @@ internal static class CombatSchemaV1
 
     public static class Enemies
     {
-        public const int EnemyCap = SimCombatState.EnemyCap;
+        public const int EnemyCap = CombatSimLayout.EnemyCap;
 
         public static readonly int EnemyHpBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyMaxHpBytes = EnemyCap * sizeof(ushort);
@@ -213,9 +230,10 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentDmgBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyIntentHitsBytes = EnemyCap * sizeof(byte);
         public static readonly int EnemyIntentBytes = EnemyCap * sizeof(byte);
-        public static readonly int EnemyPowersBytes = EnemyCap * SimCombatState.PowersPerCre * sizeof(short);
+        public static readonly int EnemyPowersBytes = EnemyCap * CombatSimLayout.PowersPerCre * sizeof(short);
         public static readonly int EnemyPowerInternalBytes = EnemyCap * CombatSchemaV1.SimPowerInternalSize;
         public static readonly int EnemyMoveSmBytes = EnemyCap * CombatSchemaV1.SimEnemyMoveSMSize;
+        public static readonly int EnemyMoveTableHandleBytes = EnemyCap * sizeof(ushort);
 
         public static readonly int EnemyCountOffset;
         public static readonly int EnemyHpOffset;
@@ -227,6 +245,7 @@ internal static class CombatSchemaV1
         public static readonly int EnemyPowersOffset;
         public static readonly int EnemyPowerInternalOffset;
         public static readonly int EnemyMoveSmOffset;
+        public static readonly int EnemyMoveTableHandleOffset;
         public static readonly int TotalBytes;
 
         static Enemies()
@@ -266,6 +285,65 @@ internal static class CombatSchemaV1
 
             EnemyMoveSmOffset = offset;
             offset += EnemyMoveSmBytes;
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            EnemyMoveTableHandleOffset = offset;
+            offset += EnemyMoveTableHandleBytes;
+
+            TotalBytes = offset;
+        }
+    }
+
+    public static class Runtime
+    {
+        public static readonly int OrbSlotsBytes = 10 * sizeof(ushort);
+        public static readonly int OstyBytes = CombatSchemaV1.SimPetSize;
+        public static readonly int OstyPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
+        public static readonly int OstyPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
+        public static readonly int RngBytes = CombatSchemaV1.RandomStateBufferSize;
+
+        public static readonly int OrbSlotsOffset;
+        public static readonly int OrbCountOffset;
+        public static readonly int OrbCapacityOffset;
+        public static readonly int OstyOffset;
+        public static readonly int OstyPowersOffset;
+        public static readonly int OstyPowerInternalOffset;
+        public static readonly int RngOffset;
+        public static readonly int TotalBytes;
+
+        static Runtime()
+        {
+            int offset = Enemies.TotalBytes;
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            OrbSlotsOffset = offset;
+            offset += OrbSlotsBytes;
+
+            OrbCountOffset = offset;
+            offset += sizeof(byte);
+
+            OrbCapacityOffset = offset;
+            offset += sizeof(byte);
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            OstyOffset = offset;
+            offset += OstyBytes;
+
+            offset = AlignUp(offset, sizeof(short));
+
+            OstyPowersOffset = offset;
+            offset += OstyPowersBytes;
+
+            OstyPowerInternalOffset = offset;
+            offset += OstyPowerInternalBytes;
+
+            offset = AlignUp(offset, sizeof(int));
+
+            RngOffset = offset;
+            offset += RngBytes;
 
             TotalBytes = offset;
         }

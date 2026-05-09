@@ -9,7 +9,7 @@ namespace STS2.Agent.Sim;
 /// enough to deterministically replay <c>RollMove</c> inside the DFS hot path
 /// without ever touching the live game object graph.
 ///
-/// Layout (Pack=1, total 25 bytes; 6 × 25 = 150 B per <see cref="SimCombatState"/> clone):
+/// Layout (Pack=1, total 25 bytes; 6 × 25 = 150 B per enemy blob slice):
 /// <code>
 /// offset  field                      size  notes
 ///  0      CurrentStateIdx            1     index into MonsterStateTable.StateIds
