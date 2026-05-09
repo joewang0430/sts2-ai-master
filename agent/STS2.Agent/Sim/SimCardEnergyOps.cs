@@ -87,8 +87,14 @@ internal static class SimCardEnergyOps
     public static bool AfterCardPlayedCleanup(SimCombatState state, in SimCard card)
         => RemoveModifiers(state, card.InstanceId, LocalCostModifierExpiration.WhenPlayed);
 
+    public static bool AfterCardPlayedCleanup(CombatNodeBlob blob, in SimCard card)
+        => RemoveModifiers(blob, card.InstanceId, LocalCostModifierExpiration.WhenPlayed);
+
     public static bool EndOfTurnCleanup(SimCombatState state, in SimCard card)
         => RemoveModifiers(state, card.InstanceId, LocalCostModifierExpiration.EndOfTurn);
+
+    public static bool EndOfTurnCleanup(CombatNodeBlob blob, in SimCard card)
+        => RemoveModifiers(blob, card.InstanceId, LocalCostModifierExpiration.EndOfTurn);
 
     private static bool RemoveModifiers(SimCombatState state, ushort instanceId, LocalCostModifierExpiration expiration)
     {
@@ -109,6 +115,28 @@ internal static class SimCardEnergyOps
 
         int kept = write - start;
         state.CardEnergyModifierCount[instanceId] = (ushort)kept;
+        return kept != count;
+    }
+
+    private static bool RemoveModifiers(CombatNodeBlob blob, ushort instanceId, LocalCostModifierExpiration expiration)
+    {
+        int start = blob.CardEnergyModifierStart[instanceId];
+        int count = blob.CardEnergyModifierCount[instanceId];
+        if (count == 0) return false;
+
+        int write = start;
+        int end = start + count;
+        for (int read = start; read < end; read++)
+        {
+            SimLocalCostModifier modifier = blob.CardEnergyModifiers[read];
+            if ((modifier.Expiration & expiration) != 0)
+                continue;
+
+            blob.CardEnergyModifiers[write++] = modifier;
+        }
+
+        int kept = write - start;
+        blob.CardEnergyModifierCount[instanceId] = (ushort)kept;
         return kept != count;
     }
 

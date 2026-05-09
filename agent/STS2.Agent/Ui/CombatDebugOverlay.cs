@@ -64,6 +64,8 @@ internal static class CombatDebugOverlay
     // Reused across Refresh() calls; CopyFrom-style snapshot never allocates.
     private static readonly SimCombatState _sim = new();
     private static readonly CombatNodeBlob _blob = new();
+    private static readonly SimCombatState _simScratch = new();
+    private static readonly CombatNodeBlob _blobScratch = new();
 
     // ── Next-turn-hand prediction state ───────────────────────────────────────
     // The prediction is computed during every Refresh() for state.RoundNumber + 1.
@@ -715,12 +717,15 @@ internal static class CombatDebugOverlay
         if (pcs is not null)
         {
             int simHandCount = blobReady ? _blob.HandCount : _sim.HandCount;
+            int simDrawCount = blobReady ? _blob.DrawCount : _sim.DrawCount;
+            int simDiscCount = blobReady ? _blob.DiscCount : _sim.DiscCount;
+            int simExhaustCount = blobReady ? _blob.ExhaustCount : _sim.ExhaustCount;
             Cmp("Energy",    _sim.Energy,    pcs.Energy);
             Cmp("MaxEnergy", _sim.MaxEnergy, pcs.MaxEnergy);
             Cmp("HandN",     simHandCount,      pcs.Hand.Cards.Count);
-            Cmp("DrawN",     _sim.DrawCount,    pcs.DrawPile.Cards.Count);
-            Cmp("DiscN",     _sim.DiscCount,    pcs.DiscardPile.Cards.Count);
-            Cmp("ExhN",      _sim.ExhaustCount, pcs.ExhaustPile.Cards.Count);
+            Cmp("DrawN",     simDrawCount,      pcs.DrawPile.Cards.Count);
+            Cmp("DiscN",     simDiscCount,      pcs.DiscardPile.Cards.Count);
+            Cmp("ExhN",      simExhaustCount,   pcs.ExhaustPile.Cards.Count);
 
             // First blob consumption path: read hand card hot data from the
             // frozen blob when it is available, otherwise fall back to legacy.
@@ -771,9 +776,18 @@ internal static class CombatDebugOverlay
             // Bulk pile diff: scan every card, summarize. A full per-card dump
             // would blow past column height for 50+ card decks; instead show
             // total mismatch count and the first few offenders.
-            DiffPile(simSb, "Draw", _sim.Draw, _sim.DrawCount, pcs.DrawPile.Cards,    ref simAllOk);
-            DiffPile(simSb, "Disc", _sim.Disc, _sim.DiscCount, pcs.DiscardPile.Cards, ref simAllOk);
-            DiffPile(simSb, "Exh",  _sim.Exhaust, _sim.ExhaustCount, pcs.ExhaustPile.Cards, ref simAllOk);
+            DiffPile(simSb, "Draw",
+                blobReady ? _blob.DrawCards.Slice(0, simDrawCount) : _sim.Draw.AsSpan(0, simDrawCount),
+                pcs.DrawPile.Cards,
+                ref simAllOk);
+            DiffPile(simSb, "Disc",
+                blobReady ? _blob.DiscCards.Slice(0, simDiscCount) : _sim.Disc.AsSpan(0, simDiscCount),
+                pcs.DiscardPile.Cards,
+                ref simAllOk);
+            DiffPile(simSb, "Exh",
+                blobReady ? _blob.ExhaustCards.Slice(0, simExhaustCount) : _sim.Exhaust.AsSpan(0, simExhaustCount),
+                pcs.ExhaustPile.Cards,
+                ref simAllOk);
         }
 
         // ── Player powers: walk live list, look up sim slot via registry,
@@ -806,7 +820,10 @@ internal static class CombatDebugOverlay
         DiffAllRng(simSb, state, ref simAllOk);
 
         if (blobReady)
+        {
             DiffBlobCardSlice(blobSb, ref blobAllOk);
+            DiffBlobCleanupMutations(blobSb, ref blobAllOk);
+        }
 
         if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
         if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CARD SLICE")) + 1, "✓ ALL OK\n");
@@ -877,16 +894,17 @@ internal static class CombatDebugOverlay
     /// </summary>
     private static void DiffPile(
         StringBuilder sb, string tag,
-        SimCard[] simSlice, int simCount,
+        ReadOnlySpan<SimCard> simSlice,
         IReadOnlyList<CardModel> live,
         ref bool allOk)
     {
+        int simCount = simSlice.Length;
         int n = Math.Min(simCount, live.Count);
         int diffs = 0;
         var firstMismatches = new System.Text.StringBuilder(64);
         for (int i = 0; i < n; i++)
         {
-            ref var sc = ref simSlice[i];
+            SimCard sc = simSlice[i];
             bool   simU = sc.IsUpgraded;
             ushort sid  = sc.BaseCardId;
             string simN = ReverseCardName(sid);
@@ -943,6 +961,69 @@ internal static class CombatDebugOverlay
             _sim.CardEnergyModifiers.AsSpan(0, _sim.CardEnergyModifierUsed),
             _blob.CardEnergyModifiers.Slice(0, _blob.CardEnergyModifierUsed),
             ref allOk);
+    }
+
+    private static void DiffBlobCleanupMutations(StringBuilder sb, ref bool allOk)
+    {
+        int handCount = Math.Min(_sim.HandCount, _blob.HandCount);
+        DiffBlobCleanupMutationSet(sb, "B.PlayCln", handCount, endOfTurn: false, ref allOk);
+        DiffBlobCleanupMutationSet(sb, "B.TurnCln", handCount, endOfTurn: true, ref allOk);
+    }
+
+    private static void DiffBlobCleanupMutationSet(
+        StringBuilder sb,
+        string tag,
+        int handCount,
+        bool endOfTurn,
+        ref bool allOk)
+    {
+        if (handCount == 0)
+        {
+            sb.AppendLine($"✓ {tag}(0)");
+            return;
+        }
+
+        int diffs = 0;
+        var firstMismatches = new StringBuilder(96);
+        for (int i = 0; i < handCount; i++)
+        {
+            _simScratch.CopyFrom(_sim);
+            _blobScratch.CopyFrom(_blob);
+
+            SimCard legacyCard = _simScratch.Hand[i];
+            SimCard blobCard = _blobScratch.HandCards[i];
+            bool legacyChanged = endOfTurn
+                ? SimCardEnergyOps.EndOfTurnCleanup(_simScratch, legacyCard)
+                : SimCardEnergyOps.AfterCardPlayedCleanup(_simScratch, legacyCard);
+            bool blobChanged = endOfTurn
+                ? SimCardEnergyOps.EndOfTurnCleanup(_blobScratch, blobCard)
+                : SimCardEnergyOps.AfterCardPlayedCleanup(_blobScratch, blobCard);
+
+            string? reason = null;
+            bool ok = legacyCard.InstanceId == blobCard.InstanceId
+                && legacyChanged == blobChanged
+                && BlobCardEnergyInstanceEquals(_simScratch, legacyCard, _blobScratch, blobCard, out reason);
+            if (ok)
+                continue;
+
+            diffs++;
+            if (diffs <= 3)
+            {
+                firstMismatches.AppendLine(
+                    $"  ✗ {tag}[{i}]: changed sim={legacyChanged} blob={blobChanged} " +
+                    $"card={ReverseCardName(legacyCard.BaseCardId)}#{legacyCard.InstanceId} {reason}");
+            }
+        }
+
+        if (diffs == 0)
+        {
+            sb.AppendLine($"✓ {tag}({handCount})");
+            return;
+        }
+
+        allOk = false;
+        sb.AppendLine($"✗ {tag}: {diffs} diff(s)");
+        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
     }
 
     private static void DiffBlobPile(
@@ -1077,6 +1158,71 @@ internal static class CombatDebugOverlay
     private static bool SimLocalCostModifierEquals(in SimLocalCostModifier left, in SimLocalCostModifier right)
         => left.Amount == right.Amount
         && left.Flags == right.Flags;
+
+    private static bool BlobCardEnergyInstanceEquals(
+        SimCombatState legacyState,
+        in SimCard legacyCard,
+        CombatNodeBlob blobState,
+        in SimCard blobCard,
+        out string? reason)
+    {
+        ushort instanceId = legacyCard.InstanceId;
+        if (instanceId != blobCard.InstanceId)
+        {
+            reason = $"iid sim={instanceId} blob={blobCard.InstanceId}";
+            return false;
+        }
+
+        if (legacyState.CardEnergyBaseCost[instanceId] != blobState.CardEnergyBaseCost[instanceId])
+        {
+            reason = $"base sim={legacyState.CardEnergyBaseCost[instanceId]} blob={blobState.CardEnergyBaseCost[instanceId]}";
+            return false;
+        }
+
+        if (legacyState.CardEnergyCapturedX[instanceId] != blobState.CardEnergyCapturedX[instanceId])
+        {
+            reason = $"x sim={legacyState.CardEnergyCapturedX[instanceId]} blob={blobState.CardEnergyCapturedX[instanceId]}";
+            return false;
+        }
+
+        ushort legacyStart = legacyState.CardEnergyModifierStart[instanceId];
+        ushort blobStart = blobState.CardEnergyModifierStart[instanceId];
+        if (legacyStart != blobStart)
+        {
+            reason = $"start sim={legacyStart} blob={blobStart}";
+            return false;
+        }
+
+        ushort legacyCount = legacyState.CardEnergyModifierCount[instanceId];
+        ushort blobCount = blobState.CardEnergyModifierCount[instanceId];
+        if (legacyCount != blobCount)
+        {
+            reason = $"count sim={legacyCount} blob={blobCount}";
+            return false;
+        }
+
+        for (int offset = 0; offset < legacyCount; offset++)
+        {
+            ref SimLocalCostModifier legacyModifier = ref legacyState.CardEnergyModifiers[legacyStart + offset];
+            ref SimLocalCostModifier blobModifier = ref blobState.CardEnergyModifiers[blobStart + offset];
+            if (SimLocalCostModifierEquals(in legacyModifier, in blobModifier))
+                continue;
+
+            reason = $"mod[{offset}] sim={DescribeModifier(in legacyModifier)} blob={DescribeModifier(in blobModifier)}";
+            return false;
+        }
+
+        int legacyCost = SimCardEnergyOps.GetWithLocalModifiers(legacyState, legacyCard);
+        int blobCost = SimCardEnergyOps.GetWithLocalModifiers(blobState, blobCard);
+        if (legacyCost != blobCost)
+        {
+            reason = $"cost sim={legacyCost} blob={blobCost}";
+            return false;
+        }
+
+        reason = null;
+        return true;
+    }
 
     private static string DescribeSimCard(in SimCard card)
         => $"{ReverseCardName(card.BaseCardId)}{(card.IsUpgraded ? "+" : string.Empty)}" +
