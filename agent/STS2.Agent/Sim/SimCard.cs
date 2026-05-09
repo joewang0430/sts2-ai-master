@@ -5,7 +5,7 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Per-card-instance hot data carried through every pile (Hand / Draw / Disc /
-/// Exhaust). All seven mutable fields game-side <see cref="MegaCrit.Sts2.Core.Models.CardModel"/>
+/// Exhaust). All mutable card-side fields plus the hot enchantment state game-side <see cref="MegaCrit.Sts2.Core.Models.CardModel"/>
 /// can change mid-combat are captured here so a card laundered through
 /// <c>Disc → shuffled into Draw → drawn back into Hand</c> retains identity.
 ///
@@ -17,7 +17,8 @@ namespace STS2.Agent.Sim;
 ///   3      1    LastStarsSpent     // byte; 0..255
 ///   4      1    BaseReplayCount    // byte; Echo Form &amp; co (0 = default 1 play)
 ///   5      1    Flags              // bit0=ExhaustOnNextPlay, bit1=ShouldRetainThisTurn,
-///                                  // bit2=IsSlyThisTurn, bits3..7=reserved
+///                                  // bit2=IsSlyThisTurn, bit3=EnchantmentDisabled,
+///                                  // bits4..7=reserved
 ///   6      1    EnchantmentId      // 0 = None; otherwise SimEnchantmentType.*
 ///   7      1    EnchantmentAmount  // byte; clamped non-negative stack count
 /// </code>
@@ -57,7 +58,8 @@ internal struct SimCard
     public byte BaseReplayCount;
 
     /// <summary>Bitfield: bit0 ExhaustOnNextPlay, bit1 ShouldRetainThisTurn,
-    /// bit2 IsSlyThisTurn. See <see cref="FlagExhaustOnNextPlay"/> &amp; co.</summary>
+    /// bit2 IsSlyThisTurn, bit3 EnchantmentDisabled. See
+    /// <see cref="FlagExhaustOnNextPlay"/> &amp; co.</summary>
     public byte Flags;
 
     /// <summary>0 = no enchantment; otherwise an index from <see cref="SimEnchantmentType"/>.</summary>
@@ -70,6 +72,7 @@ internal struct SimCard
     public const byte FlagExhaustOnNextPlay = 1 << 0;
     public const byte FlagShouldRetainThisTurn = 1 << 1;
     public const byte FlagIsSlyThisTurn = 1 << 2;
+    public const byte FlagEnchantmentDisabled = 1 << 3;
 
     /// <summary>True iff bit 15 of <see cref="CardId"/> is set.</summary>
     public readonly bool IsUpgraded
@@ -83,5 +86,12 @@ internal struct SimCard
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => (ushort)(CardId & 0x7FFF);
+    }
+
+    /// <summary>True iff the attached enchantment has transitioned out of its active state.</summary>
+    public readonly bool IsEnchantmentDisabled
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Flags & FlagEnchantmentDisabled) != 0;
     }
 }

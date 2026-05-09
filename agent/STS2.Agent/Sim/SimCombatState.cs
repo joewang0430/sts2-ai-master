@@ -167,7 +167,7 @@ internal sealed partial class SimCombatState
     public readonly MonsterStateTable?[] EnemyMoveTables = new MonsterStateTable?[EnemyCap];
 
     // ── Card piles (SimCard structs; 8 bytes each) ──────────────────────────────
-    // SimCard wraps the CardId ushort with the seven mutable per-instance fields
+    // SimCard wraps the CardId ushort with the mutable per-instance fields
     // a CardModel can carry mid-combat (BaseStarCost, LastStarsSpent,
     // BaseReplayCount, Flags, EnchantmentId, EnchantmentAmount). A card
     // shuffled Disc → Draw → Hand keeps its identity bit-exact.

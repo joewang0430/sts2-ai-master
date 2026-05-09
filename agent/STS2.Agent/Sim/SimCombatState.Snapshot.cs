@@ -2,6 +2,7 @@ using System;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Enchantments;
 using MegaCrit.Sts2.Core.Entities.Orbs;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
@@ -206,7 +207,9 @@ internal sealed partial class SimCombatState
             // Flags: ExhaustOnNextPlay is the only public dynamic-flag getter
             // we need; ShouldRetainThisTurn / IsSlyThisTurn collapse the
             // (per-instance _hasSingleTurnXxx OR static Keywords) source — for
-            // sim outcomes this combined truth is what matters.
+            // sim outcomes this combined truth is what matters. Enchantment
+            // disabled-state is packed here as well so one-shot enchantments
+            // like Vigorous do not reactivate when the card moves between piles.
             byte flags = 0;
             if (card.ExhaustOnNextPlay)    flags |= SimCard.FlagExhaustOnNextPlay;
             if (card.ShouldRetainThisTurn) flags |= SimCard.FlagShouldRetainThisTurn;
@@ -222,6 +225,8 @@ internal sealed partial class SimCombatState
             {
                 encId  = SimEnchantmentRegistry.GetIndexOrNone(ench.GetType());
                 encAmt = ClampU8(ench.Amount);
+                if (ench.Status == EnchantmentStatus.Disabled)
+                    flags |= SimCard.FlagEnchantmentDisabled;
             }
 
             dst[i] = new SimCard
