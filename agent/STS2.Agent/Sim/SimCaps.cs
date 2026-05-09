@@ -134,7 +134,30 @@ internal static class SimCaps
                 ". Add typeof(...) → SimEnchantmentType.Xxx entries and bump SimEnchantmentType.Count.");
         }
 
-        // ── 6. Orb queue capacity must equal SimCombatState's OrbSlots10
+        // ── 6. Every concrete AfflictionModel must be registered in
+        //    SimAfflictionRegistry. There is one live affliction slot per card,
+        //    so an unknown subtype would silently disappear from snapshot state.
+        List<string>? missingAff = null;
+        foreach (AfflictionModel aff in ModelDb.DebugAfflictions)
+        {
+            Type t = aff.GetType();
+            string? ns = t.Namespace;
+            if (ns != null && ns.EndsWith(".Afflictions.Mocks", StringComparison.Ordinal)) continue;
+            if (!SimAfflictionRegistry.TryGetIndex(t, out _))
+            {
+                missingAff ??= new List<string>();
+                missingAff.Add(t.FullName ?? t.Name);
+            }
+        }
+        if (missingAff is { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "SimCaps: AfflictionModel subclasses not registered in SimAfflictionRegistry: " +
+                string.Join(", ", missingAff) +
+                ". Add typeof(...) → SimAfflictionType.Xxx entries and bump SimAfflictionType.Count.");
+        }
+
+        // ── 7. Orb queue capacity must equal SimCombatState's OrbSlots10
         //    inline length (10). If the game ever raises maxCapacity, the
         //    snapshot loop would silently truncate the queue.
         if (OrbQueue.maxCapacity != 10)
@@ -145,7 +168,7 @@ internal static class SimCaps
                 "Update OrbSlots10 and rebuild.");
         }
 
-        // ── 7. Every concrete OrbModel subclass must be registered in
+        // ── 8. Every concrete OrbModel subclass must be registered in
         //    SimOrbRegistry. Snapshot reads orbs through the registry; an
         //    unknown subclass would land as SimOrbType.None (= empty),
         //    silently dropping the orb from the simulation.

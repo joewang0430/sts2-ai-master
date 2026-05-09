@@ -5,11 +5,11 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Per-card-instance hot data carried through every pile (Hand / Draw / Disc /
-/// Exhaust). All mutable card-side fields plus the hot enchantment state game-side <see cref="MegaCrit.Sts2.Core.Models.CardModel"/>
+/// Exhaust). All mutable card-side fields plus the hot enchantment / affliction state game-side <see cref="MegaCrit.Sts2.Core.Models.CardModel"/>
 /// can change mid-combat are captured here so a card laundered through
 /// <c>Disc → shuffled into Draw → drawn back into Hand</c> retains identity.
 ///
-/// <para><b>Layout</b> (Pack=1, exactly 8 bytes):</para>
+/// <para><b>Layout</b> (Pack=1, exactly 10 bytes):</para>
 /// <code>
 /// offset  size  field
 ///   0      2    CardId             // bit15=upgraded, bits0..14=SimCardId
@@ -18,19 +18,22 @@ namespace STS2.Agent.Sim;
 ///   4      1    BaseReplayCount    // byte; Echo Form &amp; co (0 = default 1 play)
 ///   5      1    Flags              // bit0=ExhaustOnNextPlay, bit1=ShouldRetainThisTurn,
 ///                                  // bit2=IsSlyThisTurn, bit3=EnchantmentDisabled,
-///                                  // bits4..7=reserved
+///                                  // bit4=AfflictionAppliedExhaust,
+///                                  // bit5=AfflictionAppliedEthereal, bits6..7=reserved
 ///   6      1    EnchantmentId      // 0 = None; otherwise SimEnchantmentType.*
 ///   7      1    EnchantmentAmount  // byte; clamped non-negative stack count
+///   8      1    AfflictionId       // 0 = None; otherwise SimAfflictionType.*
+///   9      1    AfflictionAmount   // byte; clamped non-negative stack count
 /// </code>
 ///
-/// <para>Why 8 bytes:</para>
+/// <para>Why 10 bytes:</para>
 /// <list type="bullet">
-///   <item>One natural alignment unit; <c>SimCard[]</c> reads/writes are a single
-///         <c>movq</c> on x64.</item>
-///   <item>4 piles × (10 + 200 + 200 + 200) × 8 B = 4880 B per snapshot — fits
-///         within typical L1d budget.</item>
+///   <item>The smallest direct extension that stops dropping all afflictions
+///         from the combat snapshot while keeping per-card state contiguous.</item>
+///   <item>4 piles × (10 + 200 + 200 + 200) × 10 B = 6100 B per snapshot — still
+///         within a modest slice of L1d/L2 budget.</item>
 ///   <item>Default-state cards (no star cost, no replay, no flags, no
-///         enchantment) compress to <c>{ CardId, -1, 0, 0, 0, 0, 0 }</c> i.e.
+///         enchantment, no affliction) compress to <c>{ CardId, -1, 0, 0, 0, 0, 0, 0, 0 }</c> i.e.
 ///         only CardId+(-1) is non-zero — friendly for SIM DIFF noise filtering.</item>
 /// </list>
 ///
@@ -39,7 +42,7 @@ namespace STS2.Agent.Sim;
 /// (compiles to a vectorized memmove) and the whole <see cref="SimCombatState"/>
 /// remains GC-trace-free.</para>
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 8)]
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 10)]
 internal struct SimCard
 {
     /// <summary>Encoded card identity: bit 15 = upgraded, bits 0–14 = SimCardId.</summary>
@@ -58,7 +61,8 @@ internal struct SimCard
     public byte BaseReplayCount;
 
     /// <summary>Bitfield: bit0 ExhaustOnNextPlay, bit1 ShouldRetainThisTurn,
-    /// bit2 IsSlyThisTurn, bit3 EnchantmentDisabled. See
+    /// bit2 IsSlyThisTurn, bit3 EnchantmentDisabled,
+    /// bit4 AfflictionAppliedExhaust, bit5 AfflictionAppliedEthereal. See
     /// <see cref="FlagExhaustOnNextPlay"/> &amp; co.</summary>
     public byte Flags;
 
@@ -69,10 +73,19 @@ internal struct SimCard
     /// clamped to byte; 0 if no enchantment.</summary>
     public byte EnchantmentAmount;
 
+    /// <summary>0 = no affliction; otherwise an index from <see cref="SimAfflictionType"/>.</summary>
+    public byte AfflictionId;
+
+    /// <summary>Affliction stack count (<see cref="MegaCrit.Sts2.Core.Models.AfflictionModel.Amount"/>),
+    /// clamped to byte; 0 if no affliction.</summary>
+    public byte AfflictionAmount;
+
     public const byte FlagExhaustOnNextPlay = 1 << 0;
     public const byte FlagShouldRetainThisTurn = 1 << 1;
     public const byte FlagIsSlyThisTurn = 1 << 2;
     public const byte FlagEnchantmentDisabled = 1 << 3;
+    public const byte FlagAfflictionAppliedExhaust = 1 << 4;
+    public const byte FlagAfflictionAppliedEthereal = 1 << 5;
 
     /// <summary>True iff bit 15 of <see cref="CardId"/> is set.</summary>
     public readonly bool IsUpgraded
@@ -93,5 +106,19 @@ internal struct SimCard
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => (Flags & FlagEnchantmentDisabled) != 0;
+    }
+
+    /// <summary>True iff the attached Devoured affliction added Exhaust itself.</summary>
+    public readonly bool IsAfflictionAppliedExhaust
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Flags & FlagAfflictionAppliedExhaust) != 0;
+    }
+
+    /// <summary>True iff the attached Hexed affliction added Ethereal itself.</summary>
+    public readonly bool IsAfflictionAppliedEthereal
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Flags & FlagAfflictionAppliedEthereal) != 0;
     }
 }

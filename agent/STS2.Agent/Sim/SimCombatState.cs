@@ -166,14 +166,15 @@ internal sealed partial class SimCombatState
     /// </summary>
     public readonly MonsterStateTable?[] EnemyMoveTables = new MonsterStateTable?[EnemyCap];
 
-    // ── Card piles (SimCard structs; 8 bytes each) ──────────────────────────────
+    // ── Card piles (SimCard structs; 10 bytes each) ─────────────────────────────
     // SimCard wraps the CardId ushort with the mutable per-instance fields
     // a CardModel can carry mid-combat (BaseStarCost, LastStarsSpent,
-    // BaseReplayCount, Flags, EnchantmentId, EnchantmentAmount). A card
+    // BaseReplayCount, Flags, EnchantmentId, EnchantmentAmount,
+    // AfflictionId, AfflictionAmount). A card
     // shuffled Disc → Draw → Hand keeps its identity bit-exact.
     // *Count stays int because loop bounds are JIT-friendlier as int.
-    // Storage: 4 piles × (10 + 200 + 200 + 200) × 8 B = 4880 B (≈77 cache lines),
-    // up from 1220 B with the old ushort encoding (+3660 B per snapshot).
+    // Storage: 4 piles × (10 + 200 + 200 + 200) × 10 B = 6100 B (≈96 cache lines),
+    // up from 1220 B with the old ushort encoding (+4880 B per snapshot).
     public readonly SimCard[] Hand    = new SimCard[HandCap];   public int HandCount;
     public readonly SimCard[] Draw    = new SimCard[PileCap];   public int DrawCount;
     public readonly SimCard[] Disc    = new SimCard[PileCap];   public int DiscCount;

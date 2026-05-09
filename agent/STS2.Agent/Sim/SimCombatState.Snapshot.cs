@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Entities.Enchantments;
 using MegaCrit.Sts2.Core.Entities.Orbs;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Afflictions;
 using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.Models.Powers;
@@ -229,6 +230,20 @@ internal sealed partial class SimCombatState
                     flags |= SimCard.FlagEnchantmentDisabled;
             }
 
+            byte affId = 0;
+            byte affAmt = 0;
+            AfflictionModel? aff = card.Affliction;
+            if (aff != null)
+            {
+                affId = SimAfflictionRegistry.GetIndexOrNone(aff.GetType());
+                affAmt = ClampU8(aff.Amount);
+
+                if (aff is Devoured devoured && devoured.AppliedExhaust)
+                    flags |= SimCard.FlagAfflictionAppliedExhaust;
+                if (aff is Hexed hexed && hexed.AppliedEthereal)
+                    flags |= SimCard.FlagAfflictionAppliedEthereal;
+            }
+
             dst[i] = new SimCard
             {
                 CardId            = id,
@@ -238,6 +253,8 @@ internal sealed partial class SimCombatState
                 Flags             = flags,
                 EnchantmentId     = encId,
                 EnchantmentAmount = encAmt,
+                AfflictionId      = affId,
+                AfflictionAmount  = affAmt,
             };
         }
         return n;
