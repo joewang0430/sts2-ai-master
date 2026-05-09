@@ -659,16 +659,36 @@ internal static class CombatDebugOverlay
             for (int i = 0; i < hn; i++)
             {
                 ref var sc = ref _sim.Hand[i];
+                                CardModel liveCard = pcs.Hand.Cards[i];
                 bool   simU = sc.IsUpgraded;
-                bool   livU = pcs.Hand.Cards[i].IsUpgraded;
+                                bool   livU = liveCard.IsUpgraded;
                 ushort sid  = sc.BaseCardId;
                 string simN = ReverseCardName(sid);
-                string livN = pcs.Hand.Cards[i].GetType().Name;
-                bool ok = simN == livN && simU == livU;
+                                string livN = liveCard.GetType().Name;
+
+                                int  simLocalCost = SimCardEnergyOps.GetWithLocalModifiers(_sim, sc);
+                                int  liveLocalCost = liveCard.EnergyCost.GetWithModifiers(CostModifiers.Local);
+                                bool simHasLocal = SimCardEnergyOps.GetModifierCount(_sim, sc) > 0;
+                                bool liveHasLocal = liveCard.EnergyCost.HasLocalModifiers;
+                                bool simX = sc.HasEnergyCostX;
+                                bool liveX = liveCard.EnergyCost.CostsX;
+                                int  simCapturedX = simX ? SimCardEnergyOps.GetCapturedXValue(_sim, sc) : 0;
+                                int  liveCapturedX = liveX ? liveCard.EnergyCost.CapturedXValue : 0;
+
+                                bool ok = simN == livN
+                                             && simU == livU
+                                             && simLocalCost == liveLocalCost
+                                             && simHasLocal == liveHasLocal
+                                             && simX == liveX
+                                             && simCapturedX == liveCapturedX;
                 if (!ok) allOk = false;
                 sb.AppendLine(ok
-                    ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}"
-                    : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}");
+                                        ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}" +
+                                            $" costL={simLocalCost}{(simHasLocal ? "*" : "")}{(simX ? $" X={simCapturedX}" : string.Empty)}"
+                                        : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
+                                            $" costL sim={simLocalCost}{(simHasLocal ? "*" : "")}" +
+                                            $" live={liveLocalCost}{(liveHasLocal ? "*" : "")}" +
+                                            $" X sim={simCapturedX} live={liveCapturedX}");
             }
 
             // Bulk pile diff: scan every card, summarize. A full per-card dump

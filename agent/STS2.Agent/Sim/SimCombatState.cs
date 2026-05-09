@@ -67,6 +67,17 @@ internal sealed partial class SimCombatState
     //   builds common, edit this constant manually.
     public const int PileCap      = 200;
 
+    // CardInstanceCap: current snapshot captures 4 combat piles (hand/draw/
+    // discard/exhaust), so the number of live SimCard records can never exceed
+    // 10 + 200 + 200 + 200 = 610. Index 0 is reserved in the sidecars.
+    public const int CardInstanceCap = HandCap + (PileCap * 3); // 610
+
+    // CardEnergyModifierCap: flat pool of exact local energy-cost modifiers
+    // keyed by SimCard.InstanceId. 2048 entries gives >3 modifiers per live
+    // card on average, which is ample headroom for shipped content while
+    // staying under 6 KB because SimLocalCostModifier is 3 bytes.
+    public const int CardEnergyModifierCap = 2048;
+
     // PowersPerCre: Mirrors SimPowerType.Count = 259, exactly one slot per concrete
     //   PowerModel subclass in the game (verified 2026-04). Each slot stores a layer
     //   count as short. Storage: 6 creatures * 259 * 2 B = 3108 B, ~49 cache lines,
@@ -166,19 +177,32 @@ internal sealed partial class SimCombatState
     /// </summary>
     public readonly MonsterStateTable?[] EnemyMoveTables = new MonsterStateTable?[EnemyCap];
 
-    // ── Card piles (SimCard structs; 11 bytes each) ─────────────────────────────
+    // ── Card piles (SimCard structs; 13 bytes each) ─────────────────────────────
     // SimCard wraps the CardId ushort with the mutable per-instance fields
     // a CardModel can carry mid-combat (BaseStarCost, LastStarsSpent,
     // BaseReplayCount, Flags, EnchantmentId, EnchantmentAmount,
-    // AfflictionId, AfflictionAmount). A card
+    // AfflictionId, AfflictionAmount). InstanceId gives every live card a
+    // stable snapshot-local identity so future variable-size sidecars can be
+    // keyed by card rather than by pile slot. A card
     // shuffled Disc → Draw → Hand keeps its identity bit-exact.
     // *Count stays int because loop bounds are JIT-friendlier as int.
-    // Storage: 4 piles × (10 + 200 + 200 + 200) × 11 B = 6710 B (≈105 cache lines),
-    // up from 1220 B with the old ushort encoding (+5490 B per snapshot).
+    // Storage: 4 piles × (10 + 200 + 200 + 200) × 13 B = 7930 B (≈124 cache lines),
+    // up from 1220 B with the old ushort encoding (+6710 B per snapshot).
     public readonly SimCard[] Hand    = new SimCard[HandCap];   public int HandCount;
     public readonly SimCard[] Draw    = new SimCard[PileCap];   public int DrawCount;
     public readonly SimCard[] Disc    = new SimCard[PileCap];   public int DiscCount;
     public readonly SimCard[] Exhaust = new SimCard[PileCap];   public int ExhaustCount;
+
+    // ── Card energy-cost sidecar (exact CardEnergyCost snapshot) ───────────────
+    // Indexed by SimCard.InstanceId (1..CardInstanceCount). We keep this out of
+    // SimCard because local cost modifiers are variable-length and order-sensitive.
+    public ushort CardInstanceCount;
+    public ushort CardEnergyModifierUsed;
+    public readonly short[] CardEnergyBaseCost = new short[CardInstanceCap + 1];
+    public readonly ushort[] CardEnergyCapturedX = new ushort[CardInstanceCap + 1];
+    public readonly ushort[] CardEnergyModifierStart = new ushort[CardInstanceCap + 1];
+    public readonly ushort[] CardEnergyModifierCount = new ushort[CardInstanceCap + 1];
+    public readonly SimLocalCostModifier[] CardEnergyModifiers = new SimLocalCostModifier[CardEnergyModifierCap];
 
     // ── Orb queue (Defect / Malfunctioning Robot) ─────────────────────────────
     // OrbQueue.maxCapacity = 10 in game source (asserted by SimCaps). Each
@@ -253,6 +277,8 @@ internal sealed partial class SimCombatState
         DrawCount     = src.DrawCount;
         DiscCount     = src.DiscCount;
         ExhaustCount  = src.ExhaustCount;
+        CardInstanceCount = src.CardInstanceCount;
+        CardEnergyModifierUsed = src.CardEnergyModifierUsed;
 
         // Orb queue: 20-byte inline struct + 2 scalar bytes — single struct copy.
         OrbSlots      = src.OrbSlots;
@@ -303,6 +329,17 @@ internal sealed partial class SimCombatState
         if (src.DrawCount    > 0) Array.Copy(src.Draw,    Draw,    src.DrawCount);
         if (src.DiscCount    > 0) Array.Copy(src.Disc,    Disc,    src.DiscCount);
         if (src.ExhaustCount > 0) Array.Copy(src.Exhaust, Exhaust, src.ExhaustCount);
+
+        if (src.CardInstanceCount > 0)
+        {
+            int nCards = src.CardInstanceCount + 1; // include index 0 sentinel
+            Array.Copy(src.CardEnergyBaseCost, CardEnergyBaseCost, nCards);
+            Array.Copy(src.CardEnergyCapturedX, CardEnergyCapturedX, nCards);
+            Array.Copy(src.CardEnergyModifierStart, CardEnergyModifierStart, nCards);
+            Array.Copy(src.CardEnergyModifierCount, CardEnergyModifierCount, nCards);
+        }
+        if (src.CardEnergyModifierUsed > 0)
+            Array.Copy(src.CardEnergyModifiers, CardEnergyModifiers, src.CardEnergyModifierUsed);
     }
 
     /// <summary>
@@ -320,6 +357,8 @@ internal sealed partial class SimCombatState
         PlayerStars = 0;
         EnemyCount = 0;
         HandCount = DrawCount = DiscCount = ExhaustCount = 0;
+        CardInstanceCount = 0;
+        CardEnergyModifierUsed = 0;
         OrbSlots = default;
         OrbCount = OrbCapacity = 0;
         Osty = default;

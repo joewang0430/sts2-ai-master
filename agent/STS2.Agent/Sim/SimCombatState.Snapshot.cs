@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -33,6 +35,10 @@ namespace STS2.Agent.Sim;
 /// </summary>
 internal sealed partial class SimCombatState
 {
+    private static readonly FieldInfo s_cardEnergyLocalModifiersField =
+        typeof(CardEnergyCost).GetField("_localModifiers", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("SimCombatState.Snapshot: CardEnergyCost._localModifiers field not found.");
+
     /// <summary>
     /// Capture the full state of <paramref name="combat"/> into this instance.
     /// </summary>
@@ -87,10 +93,12 @@ internal sealed partial class SimCombatState
 
         // 6) Player piles. CardPile.Cards is IReadOnlyList<CardModel>; backed by
         //    a List internally, so for-loop indexing is JIT-friendly and alloc-free.
-        HandCount    = SnapshotPile(pcs.Hand,        Hand);
-        DrawCount    = SnapshotPile(pcs.DrawPile,    Draw);
-        DiscCount    = SnapshotPile(pcs.DiscardPile, Disc);
-        ExhaustCount = SnapshotPile(pcs.ExhaustPile, Exhaust);
+        ushort nextCardInstanceId = 1;
+        HandCount    = SnapshotPile(pcs.Hand,        Hand,    ref nextCardInstanceId);
+        DrawCount    = SnapshotPile(pcs.DrawPile,    Draw,    ref nextCardInstanceId);
+        DiscCount    = SnapshotPile(pcs.DiscardPile, Disc,    ref nextCardInstanceId);
+        ExhaustCount = SnapshotPile(pcs.ExhaustPile, Exhaust, ref nextCardInstanceId);
+        CardInstanceCount = (ushort)(nextCardInstanceId - 1);
 
         // 7) Enemies.
         var enemies = combat.Enemies;
@@ -190,7 +198,7 @@ internal sealed partial class SimCombatState
     /// mutable per-instance fields) and write into <paramref name="dst"/>.
     /// Returns the number of cards written.
     /// </summary>
-    private static int SnapshotPile(CardPile pile, SimCard[] dst)
+    private int SnapshotPile(CardPile pile, SimCard[] dst, ref ushort nextCardInstanceId)
     {
         var cards = pile.Cards;
         int n = cards.Count;
@@ -220,6 +228,7 @@ internal sealed partial class SimCombatState
             if (card.Keywords.Contains(CardKeyword.Innate))   flags |= SimCard.FlagHasInnateKeyword;
             if (card.Keywords.Contains(CardKeyword.Eternal))  flags |= SimCard.FlagHasEternalKeyword;
             if (card.Keywords.Contains(CardKeyword.Ethereal)) flags |= SimCard.FlagHasEtherealKeyword;
+            if (card.EnergyCost.CostsX)                       flags |= SimCard.FlagHasEnergyCostX;
 
             // Enchantment: 0 = none. Unknown EnchantmentModel subclasses fall
             // through to None (SimCaps validates the registry at startup, so
@@ -249,9 +258,13 @@ internal sealed partial class SimCombatState
                     flags |= SimCard.FlagAfflictionAppliedEthereal;
             }
 
+            ushort instanceId = AllocateCardInstanceId(ref nextCardInstanceId);
+            SnapshotCardEnergyState(card, instanceId);
+
             dst[i] = new SimCard
             {
                 CardId            = id,
+                InstanceId        = instanceId,
                 BaseStarCost      = ClampS8(card.BaseStarCost),
                 LastStarsSpent    = ClampU8(card.LastStarsSpent),
                 BaseReplayCount   = ClampU8(card.BaseReplayCount),
@@ -264,6 +277,46 @@ internal sealed partial class SimCombatState
         }
         return n;
     }
+
+    private void SnapshotCardEnergyState(CardModel card, ushort instanceId)
+    {
+        if (instanceId == 0 || instanceId > CardInstanceCap)
+            throw new InvalidOperationException(
+                $"SimCombatState.Snapshot: card instance id {instanceId} exceeds CardInstanceCap={CardInstanceCap}.");
+
+        CardEnergyCost energy = card.EnergyCost;
+        CardEnergyBaseCost[instanceId] = ClampS16(energy.GetWithModifiers(CostModifiers.None));
+        CardEnergyCapturedX[instanceId] = energy.CostsX ? ClampU16(energy.CapturedXValue) : (ushort)0;
+        CardEnergyModifierStart[instanceId] = CardEnergyModifierUsed;
+
+        List<LocalCostModifier> localModifiers =
+            (List<LocalCostModifier>?)s_cardEnergyLocalModifiersField.GetValue(energy)
+            ?? throw new InvalidOperationException("SimCombatState.Snapshot: CardEnergyCost._localModifiers was null.");
+
+        int count = localModifiers.Count;
+        if (CardEnergyModifierUsed + count > CardEnergyModifierCap)
+        {
+            throw new InvalidOperationException(
+                $"SimCombatState.Snapshot: card energy modifiers overflowed CardEnergyModifierCap={CardEnergyModifierCap}. " +
+                $"Used={CardEnergyModifierUsed}, incoming={count}, card={card.Id.Entry}.");
+        }
+
+        CardEnergyModifierCount[instanceId] = (ushort)count;
+        for (int i = 0; i < count; i++)
+            CardEnergyModifiers[CardEnergyModifierUsed++] = SimLocalCostModifier.From(localModifiers[i]);
+    }
+
+    private static ushort AllocateCardInstanceId(ref ushort nextCardInstanceId)
+    {
+        ushort id = nextCardInstanceId;
+        if (id == 0)
+            throw new InvalidOperationException("SimCombatState.Snapshot: card instance id overflowed ushort range.");
+        nextCardInstanceId++;
+        return id;
+    }
+
+    private static short ClampS16(int v) => v < short.MinValue ? short.MinValue
+                                           : v > short.MaxValue ? short.MaxValue : (short)v;
 
     private static byte  ClampU8(int v) => v < 0 ? (byte)0 : v > 255 ? (byte)255 : (byte)v;
     private static sbyte ClampS8(int v) => v < sbyte.MinValue ? sbyte.MinValue
@@ -440,7 +493,6 @@ internal sealed partial class SimCombatState
     }
 
     private static ushort ClampU16(int v) => v < 0 ? (ushort)0 : v > 65535 ? (ushort)65535 : (ushort)v;
-    private static short  ClampS16(int v) => v < short.MinValue ? short.MinValue : v > short.MaxValue ? short.MaxValue : (short)v;
 
     /// <summary>
     /// Capture the live <c>MonsterMoveStateMachine</c> state for enemy slot
