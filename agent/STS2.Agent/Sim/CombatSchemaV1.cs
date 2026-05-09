@@ -6,10 +6,10 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Versioned byte layout for the first parallel NodeBlob prototype.
 ///
-/// V1 currently carries the full card slice, the player hot scalar block, and
-/// the enemy hot scalar+intent block. This gives us one precise, frozen layout
-/// for the highest-traffic state we need first without forcing an all-at-once
-/// rewrite of the rest of SimCombatState.
+/// V1 currently carries the full card slice, the player hot scalar+power
+/// block, and the enemy hot scalar+intent+power block. This gives us one
+/// precise, frozen layout for the highest-traffic state we need first without
+/// forcing an all-at-once rewrite of the rest of SimCombatState.
 /// </summary>
 internal static class CombatSchemaV1
 {
@@ -17,6 +17,7 @@ internal static class CombatSchemaV1
 
     public static readonly int SimCardSize = Unsafe.SizeOf<SimCard>();
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
+    public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
     public static readonly int TotalBytes = Enemies.TotalBytes;
 
     static CombatSchemaV1()
@@ -33,6 +34,20 @@ internal static class CombatSchemaV1
             throw new InvalidOperationException(
             $"CombatSchemaV1: expected SimLocalCostModifier size 2, got {SimLocalCostModifierSize}. " +
                 "Energy sidecar layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (SimPowerInternalSize != 14)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimPowerInternal size 14, got {SimPowerInternalSize}. " +
+                "Power-internal layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (Player.PlayerPowersBytes != Enemies.EnemyPowersBytes / Enemies.EnemyCap)
+        {
+            throw new InvalidOperationException(
+                "CombatSchemaV1: player/enemy power row widths drifted apart. " +
+                "Re-evaluate blob power offsets before proceeding.");
         }
     }
 
@@ -130,6 +145,7 @@ internal static class CombatSchemaV1
     public static class Player
     {
         public static readonly int PlayerPowersBytes = SimCombatState.PowersPerCre * sizeof(short);
+        public static readonly int PlayerPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
 
         public static readonly int RoundOffset;
         public static readonly int PlayerHpOffset;
@@ -139,6 +155,7 @@ internal static class CombatSchemaV1
         public static readonly int MaxEnergyOffset;
         public static readonly int PlayerStarsOffset;
         public static readonly int PlayerPowersOffset;
+        public static readonly int PlayerPowerInternalOffset;
         public static readonly int TotalBytes;
 
         static Player()
@@ -171,6 +188,9 @@ internal static class CombatSchemaV1
             PlayerPowersOffset = offset;
             offset += PlayerPowersBytes;
 
+            PlayerPowerInternalOffset = offset;
+            offset += PlayerPowerInternalBytes;
+
             TotalBytes = offset;
         }
     }
@@ -185,6 +205,8 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentDmgBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyIntentHitsBytes = EnemyCap * sizeof(byte);
         public static readonly int EnemyIntentBytes = EnemyCap * sizeof(byte);
+        public static readonly int EnemyPowersBytes = EnemyCap * SimCombatState.PowersPerCre * sizeof(short);
+        public static readonly int EnemyPowerInternalBytes = EnemyCap * CombatSchemaV1.SimPowerInternalSize;
 
         public static readonly int EnemyCountOffset;
         public static readonly int EnemyHpOffset;
@@ -193,6 +215,8 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentDmgOffset;
         public static readonly int EnemyIntentHitsOffset;
         public static readonly int EnemyIntentOffset;
+        public static readonly int EnemyPowersOffset;
+        public static readonly int EnemyPowerInternalOffset;
         public static readonly int TotalBytes;
 
         static Enemies()
@@ -221,6 +245,14 @@ internal static class CombatSchemaV1
 
             EnemyIntentOffset = offset;
             offset += EnemyIntentBytes;
+
+            offset = AlignUp(offset, sizeof(short));
+
+            EnemyPowersOffset = offset;
+            offset += EnemyPowersBytes;
+
+            EnemyPowerInternalOffset = offset;
+            offset += EnemyPowerInternalBytes;
 
             TotalBytes = offset;
         }

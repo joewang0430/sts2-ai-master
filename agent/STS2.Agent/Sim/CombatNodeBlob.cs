@@ -39,6 +39,8 @@ internal sealed class CombatNodeBlob
     public Span<ushort> EnemyIntentDmg => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyIntentDmgOffset, CombatSchemaV1.Enemies.EnemyIntentDmgBytes);
     public Span<byte> EnemyIntentHits => CastSlice<byte>(CombatSchemaV1.Enemies.EnemyIntentHitsOffset, CombatSchemaV1.Enemies.EnemyIntentHitsBytes);
     public Span<byte> EnemyIntent => CastSlice<byte>(CombatSchemaV1.Enemies.EnemyIntentOffset, CombatSchemaV1.Enemies.EnemyIntentBytes);
+    public Span<short> EnemyPowers => CastSlice<short>(CombatSchemaV1.Enemies.EnemyPowersOffset, CombatSchemaV1.Enemies.EnemyPowersBytes);
+    public Span<SimPowerInternal> EnemyPowerInternal => CastSlice<SimPowerInternal>(CombatSchemaV1.Enemies.EnemyPowerInternalOffset, CombatSchemaV1.Enemies.EnemyPowerInternalBytes);
     public Span<short> PlayerPowers => CastSlice<short>(CombatSchemaV1.Player.PlayerPowersOffset, CombatSchemaV1.Player.PlayerPowersBytes);
 
     public ref ushort HandCount => ref RefAt<ushort>(CombatSchemaV1.Cards.HandCountOffset);
@@ -55,7 +57,20 @@ internal sealed class CombatNodeBlob
     public ref ushort Energy => ref RefAt<ushort>(CombatSchemaV1.Player.EnergyOffset);
     public ref ushort MaxEnergy => ref RefAt<ushort>(CombatSchemaV1.Player.MaxEnergyOffset);
     public ref ushort PlayerStars => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerStarsOffset);
+    public ref SimPowerInternal PlayerPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Player.PlayerPowerInternalOffset);
     public ref byte EnemyCount => ref RefAt<byte>(CombatSchemaV1.Enemies.EnemyCountOffset);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ref short PlayerPower(int type)
+        => ref PlayerPowers[type];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ref short EnemyPower(int idx, int type)
+        => ref EnemyPowers[(idx * SimCombatState.PowersPerCre) + type];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ref SimPowerInternal EnemyPowerState(int idx)
+        => ref EnemyPowerInternal[idx];
 
     private Span<T> CastSlice<T>(int offset, int byteLength) where T : unmanaged
         => MemoryMarshal.Cast<byte, T>(_bytes.AsSpan(offset, byteLength));

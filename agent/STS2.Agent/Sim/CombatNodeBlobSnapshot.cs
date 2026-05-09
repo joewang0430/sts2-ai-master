@@ -23,6 +23,7 @@ internal static class CombatNodeBlobSnapshot
         dst.Energy = src.Energy;
         dst.MaxEnergy = src.MaxEnergy;
         dst.PlayerStars = src.PlayerStars;
+        dst.PlayerPowerInternal = src.PlayerPowerInternal;
         dst.EnemyCount = CheckedCountByte(src.EnemyCount, CombatSchemaV1.Enemies.EnemyCap, nameof(src.EnemyCount));
         src.PlayerPowers.AsSpan(0, SimCombatState.PowersPerCre).CopyTo(dst.PlayerPowers);
 
@@ -47,6 +48,8 @@ internal static class CombatNodeBlobSnapshot
             src.EnemyIntentDmg.AsSpan(0, enemyN).CopyTo(dst.EnemyIntentDmg);
             src.EnemyIntentHits.AsSpan(0, enemyN).CopyTo(dst.EnemyIntentHits);
             src.EnemyIntent.AsSpan(0, enemyN).CopyTo(dst.EnemyIntent);
+            src.EnemyPowers.AsSpan(0, enemyN * SimCombatState.PowersPerCre).CopyTo(dst.EnemyPowers);
+            src.EnemyPowerInternal.AsSpan(0, enemyN).CopyTo(dst.EnemyPowerInternal);
         }
 
         int cardSidecarLength = src.CardInstanceCount + 1; // keep index 0 sentinel aligned with legacy arrays
