@@ -6,10 +6,10 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Versioned byte layout for the first parallel NodeBlob prototype.
 ///
-/// V1 currently carries the full card slice plus the player hot scalar block.
-/// This gives us one precise, frozen layout for the highest-traffic state we
-/// need first (cards + immediate player resources) without forcing an
-/// all-at-once rewrite of the rest of SimCombatState.
+/// V1 currently carries the full card slice, the player hot scalar block, and
+/// the enemy hot scalar+intent block. This gives us one precise, frozen layout
+/// for the highest-traffic state we need first without forcing an all-at-once
+/// rewrite of the rest of SimCombatState.
 /// </summary>
 internal static class CombatSchemaV1
 {
@@ -17,7 +17,7 @@ internal static class CombatSchemaV1
 
     public static readonly int SimCardSize = Unsafe.SizeOf<SimCard>();
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
-    public static readonly int TotalBytes = Player.TotalBytes;
+    public static readonly int TotalBytes = Enemies.TotalBytes;
 
     static CombatSchemaV1()
     {
@@ -129,6 +129,8 @@ internal static class CombatSchemaV1
 
     public static class Player
     {
+        public static readonly int PlayerPowersBytes = SimCombatState.PowersPerCre * sizeof(short);
+
         public static readonly int RoundOffset;
         public static readonly int PlayerHpOffset;
         public static readonly int PlayerMaxHpOffset;
@@ -136,6 +138,7 @@ internal static class CombatSchemaV1
         public static readonly int EnergyOffset;
         public static readonly int MaxEnergyOffset;
         public static readonly int PlayerStarsOffset;
+        public static readonly int PlayerPowersOffset;
         public static readonly int TotalBytes;
 
         static Player()
@@ -164,6 +167,60 @@ internal static class CombatSchemaV1
 
             PlayerStarsOffset = offset;
             offset += sizeof(ushort);
+
+            PlayerPowersOffset = offset;
+            offset += PlayerPowersBytes;
+
+            TotalBytes = offset;
+        }
+    }
+
+    public static class Enemies
+    {
+        public const int EnemyCap = SimCombatState.EnemyCap;
+
+        public static readonly int EnemyHpBytes = EnemyCap * sizeof(ushort);
+        public static readonly int EnemyMaxHpBytes = EnemyCap * sizeof(ushort);
+        public static readonly int EnemyBlockBytes = EnemyCap * sizeof(ushort);
+        public static readonly int EnemyIntentDmgBytes = EnemyCap * sizeof(ushort);
+        public static readonly int EnemyIntentHitsBytes = EnemyCap * sizeof(byte);
+        public static readonly int EnemyIntentBytes = EnemyCap * sizeof(byte);
+
+        public static readonly int EnemyCountOffset;
+        public static readonly int EnemyHpOffset;
+        public static readonly int EnemyMaxHpOffset;
+        public static readonly int EnemyBlockOffset;
+        public static readonly int EnemyIntentDmgOffset;
+        public static readonly int EnemyIntentHitsOffset;
+        public static readonly int EnemyIntentOffset;
+        public static readonly int TotalBytes;
+
+        static Enemies()
+        {
+            int offset = Player.TotalBytes;
+
+            EnemyCountOffset = offset;
+            offset += sizeof(byte);
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            EnemyHpOffset = offset;
+            offset += EnemyHpBytes;
+
+            EnemyMaxHpOffset = offset;
+            offset += EnemyMaxHpBytes;
+
+            EnemyBlockOffset = offset;
+            offset += EnemyBlockBytes;
+
+            EnemyIntentDmgOffset = offset;
+            offset += EnemyIntentDmgBytes;
+
+            EnemyIntentHitsOffset = offset;
+            offset += EnemyIntentHitsBytes;
+
+            EnemyIntentOffset = offset;
+            offset += EnemyIntentBytes;
 
             TotalBytes = offset;
         }

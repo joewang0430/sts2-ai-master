@@ -23,6 +23,8 @@ internal static class CombatNodeBlobSnapshot
         dst.Energy = src.Energy;
         dst.MaxEnergy = src.MaxEnergy;
         dst.PlayerStars = src.PlayerStars;
+        dst.EnemyCount = CheckedCountByte(src.EnemyCount, CombatSchemaV1.Enemies.EnemyCap, nameof(src.EnemyCount));
+        src.PlayerPowers.AsSpan(0, SimCombatState.PowersPerCre).CopyTo(dst.PlayerPowers);
 
         dst.HandCount = CheckedCount(src.HandCount, CombatSchemaV1.Cards.HandCap, nameof(src.HandCount));
         dst.DrawCount = CheckedCount(src.DrawCount, CombatSchemaV1.Cards.PileCap, nameof(src.DrawCount));
@@ -36,6 +38,17 @@ internal static class CombatNodeBlobSnapshot
         if (src.DiscCount > 0) src.Disc.AsSpan(0, src.DiscCount).CopyTo(dst.DiscCards);
         if (src.ExhaustCount > 0) src.Exhaust.AsSpan(0, src.ExhaustCount).CopyTo(dst.ExhaustCards);
 
+        int enemyN = src.EnemyCount;
+        if (enemyN > 0)
+        {
+            src.EnemyHp.AsSpan(0, enemyN).CopyTo(dst.EnemyHp);
+            src.EnemyMaxHp.AsSpan(0, enemyN).CopyTo(dst.EnemyMaxHp);
+            src.EnemyBlock.AsSpan(0, enemyN).CopyTo(dst.EnemyBlock);
+            src.EnemyIntentDmg.AsSpan(0, enemyN).CopyTo(dst.EnemyIntentDmg);
+            src.EnemyIntentHits.AsSpan(0, enemyN).CopyTo(dst.EnemyIntentHits);
+            src.EnemyIntent.AsSpan(0, enemyN).CopyTo(dst.EnemyIntent);
+        }
+
         int cardSidecarLength = src.CardInstanceCount + 1; // keep index 0 sentinel aligned with legacy arrays
         if (cardSidecarLength > 0)
         {
@@ -47,6 +60,18 @@ internal static class CombatNodeBlobSnapshot
 
         if (src.CardEnergyModifierUsed > 0)
             src.CardEnergyModifiers.AsSpan(0, src.CardEnergyModifierUsed).CopyTo(dst.CardEnergyModifiers);
+    }
+
+    private static byte CheckedCountByte(int value, int cap, string name)
+    {
+        if ((uint)value > (uint)cap)
+        {
+            throw new InvalidOperationException(
+                $"CombatNodeBlobSnapshot: {name}={value} exceeds schema cap {cap}. " +
+                "Schema and legacy snapshot drifted; re-evaluate CombatSchemaV1 before writing blob data.");
+        }
+
+        return (byte)value;
     }
 
     private static ushort CheckedCount(int value, int cap, string name)
