@@ -7,9 +7,9 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Single contiguous byte buffer for the parallel blob-based combat state path.
 ///
-/// This first prototype exposes only the card slice defined by
+/// This first prototype exposes the V1-covered slices defined by
 /// <see cref="CombatSchemaV1"/>. The old SimCombatState remains the source of
-/// truth while we prove that the frozen schema can carry audited card data
+/// truth while we prove that the frozen schema can carry audited hot data
 /// losslessly.
 /// </summary>
 internal sealed class CombatNodeBlob
@@ -39,6 +39,14 @@ internal sealed class CombatNodeBlob
     public ref ushort ExhaustCount => ref RefAt<ushort>(CombatSchemaV1.Cards.ExhaustCountOffset);
     public ref ushort CardInstanceCount => ref RefAt<ushort>(CombatSchemaV1.Cards.CardInstanceCountOffset);
     public ref ushort CardEnergyModifierUsed => ref RefAt<ushort>(CombatSchemaV1.Cards.CardEnergyModifierUsedOffset);
+
+    public ref byte Round => ref RefAt<byte>(CombatSchemaV1.Player.RoundOffset);
+    public ref ushort PlayerHp => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerHpOffset);
+    public ref ushort PlayerMaxHp => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerMaxHpOffset);
+    public ref ushort PlayerBlock => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerBlockOffset);
+    public ref ushort Energy => ref RefAt<ushort>(CombatSchemaV1.Player.EnergyOffset);
+    public ref ushort MaxEnergy => ref RefAt<ushort>(CombatSchemaV1.Player.MaxEnergyOffset);
+    public ref ushort PlayerStars => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerStarsOffset);
 
     private Span<T> CastSlice<T>(int offset, int byteLength) where T : unmanaged
         => MemoryMarshal.Cast<byte, T>(_bytes.AsSpan(offset, byteLength));

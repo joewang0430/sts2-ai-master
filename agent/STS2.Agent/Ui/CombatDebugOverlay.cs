@@ -674,7 +674,7 @@ internal static class CombatDebugOverlay
 
         try
         {
-            CombatNodeBlobSnapshot.WriteCardSliceFromSim(_sim, _blob);
+            CombatNodeBlobSnapshot.WriteV1FromSim(_sim, _blob);
             blobReady = true;
         }
         catch (Exception ex)

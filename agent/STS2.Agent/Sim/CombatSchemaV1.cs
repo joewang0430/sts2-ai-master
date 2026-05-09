@@ -6,9 +6,9 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Versioned byte layout for the first parallel NodeBlob prototype.
 ///
-/// V1 intentionally carries only the card slice. This gives us one precise,
-/// frozen layout for the most complicated per-card state we have already
-/// audited (hot card core + exact energy-cost sidecar) without forcing an
+/// V1 currently carries the full card slice plus the player hot scalar block.
+/// This gives us one precise, frozen layout for the highest-traffic state we
+/// need first (cards + immediate player resources) without forcing an
 /// all-at-once rewrite of the rest of SimCombatState.
 /// </summary>
 internal static class CombatSchemaV1
@@ -17,7 +17,7 @@ internal static class CombatSchemaV1
 
     public static readonly int SimCardSize = Unsafe.SizeOf<SimCard>();
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
-    public static readonly int TotalBytes = Cards.TotalBytes;
+    public static readonly int TotalBytes = Player.TotalBytes;
 
     static CombatSchemaV1()
     {
@@ -122,6 +122,48 @@ internal static class CombatSchemaV1
 
             CardEnergyModifiersOffset = offset;
             offset += EnergyModifierBytes;
+
+            TotalBytes = offset;
+        }
+    }
+
+    public static class Player
+    {
+        public static readonly int RoundOffset;
+        public static readonly int PlayerHpOffset;
+        public static readonly int PlayerMaxHpOffset;
+        public static readonly int PlayerBlockOffset;
+        public static readonly int EnergyOffset;
+        public static readonly int MaxEnergyOffset;
+        public static readonly int PlayerStarsOffset;
+        public static readonly int TotalBytes;
+
+        static Player()
+        {
+            int offset = Cards.TotalBytes;
+
+            RoundOffset = offset;
+            offset += sizeof(byte);
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            PlayerHpOffset = offset;
+            offset += sizeof(ushort);
+
+            PlayerMaxHpOffset = offset;
+            offset += sizeof(ushort);
+
+            PlayerBlockOffset = offset;
+            offset += sizeof(ushort);
+
+            EnergyOffset = offset;
+            offset += sizeof(ushort);
+
+            MaxEnergyOffset = offset;
+            offset += sizeof(ushort);
+
+            PlayerStarsOffset = offset;
+            offset += sizeof(ushort);
 
             TotalBytes = offset;
         }

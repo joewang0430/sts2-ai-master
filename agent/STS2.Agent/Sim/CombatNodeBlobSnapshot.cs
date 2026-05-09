@@ -3,18 +3,26 @@ using System;
 namespace STS2.Agent.Sim;
 
 /// <summary>
-/// Transitional bridge: copies the audited card slice from the legacy
+/// Transitional bridge: copies the currently-audited V1 slices from the legacy
 /// <see cref="SimCombatState"/> into the first blob schema.
 ///
 /// The goal of this step is not to replace SimCombatState yet. The goal is to
 /// freeze offsets/caps in code and prove that one contiguous blob can carry the
-/// exact per-card state we have already audited.
+/// exact hot data we have already audited.
 /// </summary>
 internal static class CombatNodeBlobSnapshot
 {
-    public static void WriteCardSliceFromSim(SimCombatState src, CombatNodeBlob dst)
+    public static void WriteV1FromSim(SimCombatState src, CombatNodeBlob dst)
     {
         dst.Clear();
+
+        dst.Round = src.Round;
+        dst.PlayerHp = src.PlayerHp;
+        dst.PlayerMaxHp = src.PlayerMaxHp;
+        dst.PlayerBlock = src.PlayerBlock;
+        dst.Energy = src.Energy;
+        dst.MaxEnergy = src.MaxEnergy;
+        dst.PlayerStars = src.PlayerStars;
 
         dst.HandCount = CheckedCount(src.HandCount, CombatSchemaV1.Cards.HandCap, nameof(src.HandCount));
         dst.DrawCount = CheckedCount(src.DrawCount, CombatSchemaV1.Cards.PileCap, nameof(src.DrawCount));
