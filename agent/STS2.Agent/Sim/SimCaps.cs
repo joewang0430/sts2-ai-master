@@ -198,6 +198,23 @@ internal static class SimCaps
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(SimPowerInternalReader).TypeHandle);
 
+        // ── 9. Force initialization of SimMonsterStateRegistry. Its two
+        //    `static readonly FieldInfo` slots resolve
+        //    MonsterMoveStateMachine._currentState and ._performedFirstMove
+        //    via reflection with `?? throw`. Without an explicit nudge they
+        //    only fire on first SnapshotMoveSM call — meaning a game-source
+        //    rename of either field would only blow up after the AI starts
+        //    snapshotting a real combat. Force-running the cctor here turns
+        //    that latent failure into a startup-time crash.
+        //
+        //    Note: the per-monster-Type table cache (and its History16 /
+        //    EverUsedBitset capacity asserts) is still genuinely lazy — those
+        //    can only run once a live monster instance is on the field.
+        //    First-encounter validation is the best we can do without
+        //    instantiating every MonsterModel ourselves.
+        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
+            typeof(SimMonsterStateRegistry).TypeHandle);
+
         // All invariants hold. (Worst-case encounter is informational only.)
         _ = worstEncounter; _ = worstSlots;
     }

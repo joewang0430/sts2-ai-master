@@ -145,6 +145,27 @@ internal sealed partial class SimCombatState
     /// </summary>
     public readonly SimPowerInternal[] EnemyPowerInternal = new SimPowerInternal[EnemyCap];
 
+    /// <summary>
+    /// Per-enemy snapshot of <c>MonsterMoveStateMachine</c> mutable state
+    /// (current node id, first-move flag, ever-used bitset, last-16 history
+    /// ring, IllusionPower follow-up). 25 B per enemy × 6 = 150 B. See
+    /// <see cref="SimEnemyMoveSM"/> for the layout rationale and the rule-by-rule
+    /// mapping back to <c>RandomBranchState.GetStateWeight</c>.
+    /// </summary>
+    public readonly SimEnemyMoveSM[] EnemyMoveSM = new SimEnemyMoveSM[EnemyCap];
+
+    /// <summary>
+    /// Per-enemy reference to the singleton <see cref="MonsterStateTable"/>
+    /// that gives semantic meaning to the <c>byte</c> indices stored in
+    /// <see cref="EnemyMoveSM"/>. The table itself is process-lifetime
+    /// immutable, keyed by the monster's concrete <see cref="Type"/>; this
+    /// array just holds the active reference per enemy slot. Cloning is one
+    /// reference copy per slot (8 B × 6 = 48 B), no deep walk.
+    /// <c>null</c> means the slot's monster has no state machine yet (only
+    /// possible if a future game patch adds setup-less monsters).
+    /// </summary>
+    public readonly MonsterStateTable?[] EnemyMoveTables = new MonsterStateTable?[EnemyCap];
+
     // ── Card piles (SimCard structs; 8 bytes each) ──────────────────────────────
     // SimCard wraps the CardId ushort with the seven mutable per-instance fields
     // a CardModel can carry mid-combat (BaseStarCost, LastStarsSpent,
@@ -268,6 +289,12 @@ internal sealed partial class SimCombatState
             Array.Copy(src.EnemyPowers, EnemyPowers, n * PowersPerCre);
             // Enemy power-internal slice (14 B per enemy).
             Array.Copy(src.EnemyPowerInternal, EnemyPowerInternal, n);
+            // Enemy move-state-machine slice (25 B per enemy struct + 8 B per
+            // table reference). Both are flat arrays; Array.Copy lowers to a
+            // single memmove for value types and a typed reference copy for
+            // managed pointers — neither path allocates.
+            Array.Copy(src.EnemyMoveSM,     EnemyMoveSM,     n);
+            Array.Copy(src.EnemyMoveTables, EnemyMoveTables, n);
         }
 
         // Piles.
@@ -303,5 +330,7 @@ internal sealed partial class SimCombatState
         Array.Clear(OstyPowers,   0, PowersPerCre);
         Array.Clear(EnemyPowerInternal, 0, EnemyCap);
         Array.Clear(EnemyIntent,  0, EnemyCap);
+        Array.Clear(EnemyMoveSM,        0, EnemyCap);
+        Array.Clear(EnemyMoveTables,    0, EnemyCap);
     }
 }

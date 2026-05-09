@@ -9,6 +9,7 @@ using MegaCrit.Sts2.Core.Models.Monsters;
 using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
+using MegaCrit.Sts2.Core.MonsterMoves.MonsterMoveStateMachine;
 
 namespace STS2.Agent.Sim;
 
@@ -112,6 +113,10 @@ internal sealed partial class SimCombatState
             // Power-internal counters for this enemy (Nemesis/Ritual/Illusion
             // mostly, plus HardenedShell on hardened bosses).
             WritePowerInternals(e.Powers, ref EnemyPowerInternal[i]);
+
+            // Move-state-machine: current node, first-move flag, log-derived
+            // ever-used bitset, last-16 history, IllusionPower follow-up.
+            SnapshotMoveSM(e, i);
 
             // Intent: pick the FIRST AbstractIntent in NextMove.Intents and
             // classify it. Most monsters only have one intent per move; for
@@ -409,4 +414,111 @@ internal sealed partial class SimCombatState
 
     private static ushort ClampU16(int v) => v < 0 ? (ushort)0 : v > 65535 ? (ushort)65535 : (ushort)v;
     private static short  ClampS16(int v) => v < short.MinValue ? short.MinValue : v > short.MaxValue ? short.MaxValue : (short)v;
+
+    /// <summary>
+    /// Capture the live <c>MonsterMoveStateMachine</c> state for enemy slot
+    /// <paramref name="idx"/> into <see cref="EnemyMoveSM"/>[idx], and stash
+    /// the per-Type metadata table in <see cref="EnemyMoveTables"/>[idx].
+    /// Snapshot path only: does reflection reads + a dictionary build on the
+    /// first encounter of each monster type, then plain field reads forever.
+    ///
+    /// <para>Layout-derived design choices:</para>
+    /// <list type="bullet">
+    ///   <item>Full <c>StateLog</c> is reduced to a 32-bit <c>EverUsedBitset</c>
+    ///     (one bit per state) plus the last 16 entries in a ring buffer. The
+    ///     <see cref="MonsterStateTable"/> ctor verifies no rule needs deeper
+    ///     history (cooldown / maxTimes ≤ 16); a violation throws here, before
+    ///     the silently-truncated state ever reaches the search engine.</item>
+    ///   <item><c>IllusionPower.FollowUpStateId</c> (a string) is resolved
+    ///     against the table once and stored as a <c>byte</c> index; the
+    ///     associated flag bit lets the hot path branch without re-reading
+    ///     the sentinel <c>0xFF</c>.</item>
+    /// </list>
+    /// </summary>
+    private void SnapshotMoveSM(Creature enemy, int idx)
+    {
+        var monster = enemy.Monster;
+        if (monster == null) return;
+
+        MonsterStateTable? table = SimMonsterStateRegistry.GetOrBuild(monster);
+        if (table == null) return; // monster has no state machine (not yet set up)
+
+        EnemyMoveTables[idx] = table;
+
+        // Live state machine — already non-null because GetOrBuild returned a table.
+        MonsterMoveStateMachine sm = monster.MoveStateMachine!;
+
+        ref SimEnemyMoveSM dst = ref EnemyMoveSM[idx];
+        dst = default; // wipe any stale slot data left by Reset()'s slab clear
+
+        // ── Current state ─────────────────────────────────────────────────
+        MonsterState cur = SimMonsterStateRegistry.GetCurrentState(sm);
+        if (!table.IdToIdx.TryGetValue(cur.Id, out byte curIdx))
+        {
+            // States dict was built from this same machine — a missing key
+            // means the game mutated the dict mid-combat (it doesn't, today).
+            // Surface as a hard error rather than silently storing 0.
+            throw new InvalidOperationException(
+                $"SimCombatState.SnapshotMoveSM: monster '{monster.GetType().FullName}' " +
+                $"current state id '{cur.Id}' not present in cached MonsterStateTable. " +
+                "States dict mutated post-construction?");
+        }
+        dst.CurrentStateIdx = curIdx;
+
+        // ── First-move flag ──────────────────────────────────────────────
+        if (SimMonsterStateRegistry.GetPerformedFirstMove(sm))
+            dst.Flags |= SimEnemyMoveSM.FlagPerformedFirstMove;
+
+        // ── Full StateLog → EverUsedBitset (UseOnlyOnce O(1)) ─────────────
+        var log = sm.StateLog;
+        int logN = log.Count;
+        uint bitset = 0u;
+        for (int j = 0; j < logN; j++)
+        {
+            // Use TryGet: future game patches may add transient states the
+            // table doesn't cover; we silently drop them rather than throw,
+            // since they wouldn't be valid lookup targets in any rule either.
+            if (table.IdToIdx.TryGetValue(log[j].Id, out byte b))
+                bitset |= 1u << b;
+        }
+        dst.EverUsedBitset = bitset;
+
+        // ── Last min(16, logN) entries → ring buffer ──────────────────────
+        // Snapshot writes oldest-first into slots 0..keep-1. HistoryHead points
+        // to the next free slot, which is the oldest-relative "start" once full.
+        int keep  = logN < SimEnemyMoveSM.HistoryCap ? logN : SimEnemyMoveSM.HistoryCap;
+        int start = logN - keep;
+        for (int j = 0; j < keep; j++)
+        {
+            if (table.IdToIdx.TryGetValue(log[start + j].Id, out byte b))
+                dst.History[j] = b;
+            else
+                dst.History[j] = 0xFF; // unknown state — sentinel; no rule will match it
+        }
+        dst.HistoryCount = (byte)keep;
+        // When count < 16: head == count (next write goes to slot `count`).
+        // When count == 16: head == 0 (next write overwrites the oldest).
+        dst.HistoryHead  = (byte)(keep == SimEnemyMoveSM.HistoryCap ? 0 : keep);
+
+        // ── IllusionPower.FollowUpStateId → byte index + flag ─────────────
+        // FollowUpStateId is a public property; no reflection needed. Direct
+        // field on IllusionPower (sibling of the IsReviving Data class), so
+        // we re-walk the power list rather than entangle this with the
+        // existing WritePowerInternals switch.
+        dst.IllusionFollowUpIdx = SimEnemyMoveSM.NoFollowUp;
+        var powers = enemy.Powers;
+        for (int j = 0, m = powers.Count; j < m; j++)
+        {
+            if (powers[j] is IllusionPower ip)
+            {
+                string? fid = ip.FollowUpStateId;
+                if (fid != null && table.IdToIdx.TryGetValue(fid, out byte fidx))
+                {
+                    dst.IllusionFollowUpIdx = fidx;
+                    dst.Flags |= SimEnemyMoveSM.FlagHasIllusionFollowUp;
+                }
+                break; // PowerStackType.Single — one Illusion per creature.
+            }
+        }
+    }
 }
