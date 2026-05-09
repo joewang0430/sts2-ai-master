@@ -41,6 +41,7 @@ internal sealed class CombatNodeBlob
     public Span<byte> EnemyIntent => CastSlice<byte>(CombatSchemaV1.Enemies.EnemyIntentOffset, CombatSchemaV1.Enemies.EnemyIntentBytes);
     public Span<short> EnemyPowers => CastSlice<short>(CombatSchemaV1.Enemies.EnemyPowersOffset, CombatSchemaV1.Enemies.EnemyPowersBytes);
     public Span<SimPowerInternal> EnemyPowerInternal => CastSlice<SimPowerInternal>(CombatSchemaV1.Enemies.EnemyPowerInternalOffset, CombatSchemaV1.Enemies.EnemyPowerInternalBytes);
+    public Span<SimEnemyMoveSM> EnemyMoveSM => CastSlice<SimEnemyMoveSM>(CombatSchemaV1.Enemies.EnemyMoveSmOffset, CombatSchemaV1.Enemies.EnemyMoveSmBytes);
     public Span<short> PlayerPowers => CastSlice<short>(CombatSchemaV1.Player.PlayerPowersOffset, CombatSchemaV1.Player.PlayerPowersBytes);
 
     public ref ushort HandCount => ref RefAt<ushort>(CombatSchemaV1.Cards.HandCountOffset);
@@ -71,6 +72,10 @@ internal sealed class CombatNodeBlob
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ref SimPowerInternal EnemyPowerState(int idx)
         => ref EnemyPowerInternal[idx];
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ref SimEnemyMoveSM EnemyMoveState(int idx)
+        => ref EnemyMoveSM[idx];
 
     private Span<T> CastSlice<T>(int offset, int byteLength) where T : unmanaged
         => MemoryMarshal.Cast<byte, T>(_bytes.AsSpan(offset, byteLength));

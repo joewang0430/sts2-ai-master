@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -65,7 +66,7 @@ namespace STS2.Agent.Sim;
 /// </code></para>
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
-internal struct SimEnemyMoveSM
+internal struct SimEnemyMoveSM : IEquatable<SimEnemyMoveSM>
 {
     /// <summary>Index into <see cref="MonsterStateTable.StateIds"/>; 0xFF if uninitialized.</summary>
     public byte CurrentStateIdx;
@@ -104,6 +105,47 @@ internal struct SimEnemyMoveSM
     /// <summary>Test bit <paramref name="stateIdx"/> in <see cref="EverUsedBitset"/>.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public readonly bool EverUsed(byte stateIdx) => (EverUsedBitset & (1u << stateIdx)) != 0u;
+
+    public bool Equals(SimEnemyMoveSM other)
+    {
+        if (CurrentStateIdx != other.CurrentStateIdx
+            || Flags != other.Flags
+            || HistoryCount != other.HistoryCount
+            || HistoryHead != other.HistoryHead
+            || EverUsedBitset != other.EverUsedBitset
+            || IllusionFollowUpIdx != other.IllusionFollowUpIdx)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < HistoryCap; i++)
+        {
+            if (History[i] != other.History[i])
+                return false;
+        }
+
+        return true;
+    }
+
+    public override bool Equals(object? obj)
+        => obj is SimEnemyMoveSM other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        HashCode hash = new();
+        hash.Add(CurrentStateIdx);
+        hash.Add(Flags);
+        hash.Add(HistoryCount);
+        hash.Add(HistoryHead);
+        hash.Add(EverUsedBitset);
+        hash.Add(IllusionFollowUpIdx);
+        for (int i = 0; i < HistoryCap; i++)
+            hash.Add(History[i]);
+        return hash.ToHashCode();
+    }
+
+    public override string ToString()
+        => $"cur={CurrentStateIdx} fl=0x{Flags:X2} cnt={HistoryCount} head={HistoryHead} used=0x{EverUsedBitset:X8} fu={IllusionFollowUpIdx}";
 }
 
 /// <summary>

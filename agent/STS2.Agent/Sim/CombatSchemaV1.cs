@@ -7,9 +7,9 @@ namespace STS2.Agent.Sim;
 /// Versioned byte layout for the first parallel NodeBlob prototype.
 ///
 /// V1 currently carries the full card slice, the player hot scalar+power
-/// block, and the enemy hot scalar+intent+power block. This gives us one
-/// precise, frozen layout for the highest-traffic state we need first without
-/// forcing an all-at-once rewrite of the rest of SimCombatState.
+/// block, and the enemy hot scalar+intent+power+move-state block. This gives
+/// us one precise, frozen layout for the highest-traffic state we need first
+/// without forcing an all-at-once rewrite of the rest of SimCombatState.
 /// </summary>
 internal static class CombatSchemaV1
 {
@@ -18,6 +18,7 @@ internal static class CombatSchemaV1
     public static readonly int SimCardSize = Unsafe.SizeOf<SimCard>();
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
+    public static readonly int SimEnemyMoveSMSize = Unsafe.SizeOf<SimEnemyMoveSM>();
     public static readonly int TotalBytes = Enemies.TotalBytes;
 
     static CombatSchemaV1()
@@ -41,6 +42,13 @@ internal static class CombatSchemaV1
             throw new InvalidOperationException(
                 $"CombatSchemaV1: expected SimPowerInternal size 14, got {SimPowerInternalSize}. " +
                 "Power-internal layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (SimEnemyMoveSMSize != 25)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimEnemyMoveSM size 25, got {SimEnemyMoveSMSize}. " +
+                "Enemy move-state layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
         if (Player.PlayerPowersBytes != Enemies.EnemyPowersBytes / Enemies.EnemyCap)
@@ -207,6 +215,7 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentBytes = EnemyCap * sizeof(byte);
         public static readonly int EnemyPowersBytes = EnemyCap * SimCombatState.PowersPerCre * sizeof(short);
         public static readonly int EnemyPowerInternalBytes = EnemyCap * CombatSchemaV1.SimPowerInternalSize;
+        public static readonly int EnemyMoveSmBytes = EnemyCap * CombatSchemaV1.SimEnemyMoveSMSize;
 
         public static readonly int EnemyCountOffset;
         public static readonly int EnemyHpOffset;
@@ -217,6 +226,7 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentOffset;
         public static readonly int EnemyPowersOffset;
         public static readonly int EnemyPowerInternalOffset;
+        public static readonly int EnemyMoveSmOffset;
         public static readonly int TotalBytes;
 
         static Enemies()
@@ -253,6 +263,9 @@ internal static class CombatSchemaV1
 
             EnemyPowerInternalOffset = offset;
             offset += EnemyPowerInternalBytes;
+
+            EnemyMoveSmOffset = offset;
+            offset += EnemyMoveSmBytes;
 
             TotalBytes = offset;
         }

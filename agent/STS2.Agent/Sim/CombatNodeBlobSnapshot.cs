@@ -50,6 +50,7 @@ internal static class CombatNodeBlobSnapshot
             src.EnemyIntent.AsSpan(0, enemyN).CopyTo(dst.EnemyIntent);
             src.EnemyPowers.AsSpan(0, enemyN * SimCombatState.PowersPerCre).CopyTo(dst.EnemyPowers);
             src.EnemyPowerInternal.AsSpan(0, enemyN).CopyTo(dst.EnemyPowerInternal);
+            src.EnemyMoveSM.AsSpan(0, enemyN).CopyTo(dst.EnemyMoveSM);
         }
 
         int cardSidecarLength = src.CardInstanceCount + 1; // keep index 0 sentinel aligned with legacy arrays

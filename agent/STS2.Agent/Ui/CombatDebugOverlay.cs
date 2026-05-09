@@ -985,6 +985,10 @@ internal static class CombatDebugOverlay
             _sim.EnemyPowerInternal.AsSpan(0, _sim.EnemyCount),
             _blob.EnemyPowerInternal.Slice(0, _blob.EnemyCount),
             ref allOk);
+        DiffBlobSpan<SimEnemyMoveSM>(sb, "B.EMove",
+            _sim.EnemyMoveSM.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyMoveSM.Slice(0, _blob.EnemyCount),
+            ref allOk);
 
         DiffBlobPile(sb, "B.Hand", _sim.Hand, _sim.HandCount, _blob.HandCards, _blob.HandCount, ref allOk);
         DiffBlobPile(sb, "B.Draw", _sim.Draw, _sim.DrawCount, _blob.DrawCards, _blob.DrawCount, ref allOk);
