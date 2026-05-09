@@ -653,7 +653,7 @@ internal static class CombatDebugOverlay
         simSb.AppendLine();
         simSb.AppendLine("── SIM DIFF ─────────────");
         blobSb.AppendLine();
-        blobSb.AppendLine("── BLOB CARD SLICE ─────");
+        blobSb.AppendLine("── BLOB HOT SLICE ──────");
 
         bool simAllOk = true;
         bool blobAllOk = true;
@@ -688,9 +688,9 @@ internal static class CombatDebugOverlay
         {
             simSb.AppendLine("(no local player)");
             if (blobReady)
-                DiffBlobCardSlice(blobSb, ref blobAllOk);
+                DiffBlobHotSlice(blobSb, ref blobAllOk);
             if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
-            if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CARD SLICE")) + 1, "✓ ALL OK\n");
+            if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB HOT SLICE")) + 1, "✓ ALL OK\n");
             simText = PackTwoPerLine(simSb.ToString());
             blobText = PackTwoPerLine(blobSb.ToString());
             return;
@@ -709,10 +709,10 @@ internal static class CombatDebugOverlay
                 : $"✗ {name}: sim={simVal} live={liveVal}");
         }
 
-        Cmp("Round",   _sim.Round,       state.RoundNumber);
-        Cmp("HP",      _sim.PlayerHp,    pc.CurrentHp);
-        Cmp("MaxHP",   _sim.PlayerMaxHp, pc.MaxHp);
-        Cmp("Block",   _sim.PlayerBlock, pc.Block);
+        Cmp("Round",   blobReady ? _blob.Round : _sim.Round, state.RoundNumber);
+        Cmp("HP",      blobReady ? _blob.PlayerHp : _sim.PlayerHp, pc.CurrentHp);
+        Cmp("MaxHP",   blobReady ? _blob.PlayerMaxHp : _sim.PlayerMaxHp, pc.MaxHp);
+        Cmp("Block",   blobReady ? _blob.PlayerBlock : _sim.PlayerBlock, pc.Block);
 
         if (pcs is not null)
         {
@@ -720,8 +720,8 @@ internal static class CombatDebugOverlay
             int simDrawCount = blobReady ? _blob.DrawCount : _sim.DrawCount;
             int simDiscCount = blobReady ? _blob.DiscCount : _sim.DiscCount;
             int simExhaustCount = blobReady ? _blob.ExhaustCount : _sim.ExhaustCount;
-            Cmp("Energy",    _sim.Energy,    pcs.Energy);
-            Cmp("MaxEnergy", _sim.MaxEnergy, pcs.MaxEnergy);
+            Cmp("Energy",    blobReady ? _blob.Energy : _sim.Energy, pcs.Energy);
+            Cmp("MaxEnergy", blobReady ? _blob.MaxEnergy : _sim.MaxEnergy, pcs.MaxEnergy);
             Cmp("HandN",     simHandCount,      pcs.Hand.Cards.Count);
             Cmp("DrawN",     simDrawCount,      pcs.DrawPile.Cards.Count);
             Cmp("DiscN",     simDiscCount,      pcs.DiscardPile.Cards.Count);
@@ -793,24 +793,28 @@ internal static class CombatDebugOverlay
         // ── Player powers: walk live list, look up sim slot via registry,
         //    compare amount. Powers not in the registry (e.g. game-data drift,
         //    or *.Powers.Mocks if any leak) are flagged once.
-        DiffPowers(simSb, "P.Pwr", pc.Powers, _sim.PlayerPowers, 0, ref simAllOk);
+        DiffPowers(simSb, "P.Pwr", pc.Powers,
+            blobReady ? SimPowerOps.GetPlayerRow(_blob) : SimPowerOps.GetPlayerRow(_sim),
+            ref simAllOk);
 
         // Enemy counts + HP/Block/Intent for each.
-        Cmp("EnemyN", _sim.EnemyCount, state.Enemies.Count);
-        int en = Math.Min(_sim.EnemyCount, state.Enemies.Count);
+        int simEnemyCount = blobReady ? _blob.EnemyCount : _sim.EnemyCount;
+        Cmp("EnemyN", simEnemyCount, state.Enemies.Count);
+        int en = Math.Min(simEnemyCount, state.Enemies.Count);
         for (int i = 0; i < en; i++)
         {
             Creature e = state.Enemies[i];
-            Cmp($"E{i}.HP",    _sim.EnemyHp[i],    e.CurrentHp);
-            Cmp($"E{i}.MaxHP", _sim.EnemyMaxHp[i], e.MaxHp);
-            Cmp($"E{i}.Block", _sim.EnemyBlock[i],  e.Block);
+            Cmp($"E{i}.HP",    blobReady ? _blob.EnemyHp[i] : _sim.EnemyHp[i], e.CurrentHp);
+            Cmp($"E{i}.MaxHP", blobReady ? _blob.EnemyMaxHp[i] : _sim.EnemyMaxHp[i], e.MaxHp);
+            Cmp($"E{i}.Block", blobReady ? _blob.EnemyBlock[i] : _sim.EnemyBlock[i], e.Block);
 
             // Intent kind / damage / hits.
-            DiffIntent(simSb, i, e, ref simAllOk);
+            DiffIntent(simSb, i, e, blobReady, ref simAllOk);
 
             // Per-enemy power row.
-            DiffPowers(simSb, $"E{i}.Pwr", e.Powers, _sim.EnemyPowers,
-                       i * SimCombatState.PowersPerCre, ref simAllOk);
+            DiffPowers(simSb, $"E{i}.Pwr", e.Powers,
+                blobReady ? SimPowerOps.GetEnemyRow(_blob, i) : SimPowerOps.GetEnemyRow(_sim, i),
+                ref simAllOk);
         }
 
         // ── RNG: re-capture every in-combat stream and byte-compare to
@@ -821,12 +825,12 @@ internal static class CombatDebugOverlay
 
         if (blobReady)
         {
-            DiffBlobCardSlice(blobSb, ref blobAllOk);
+            DiffBlobHotSlice(blobSb, ref blobAllOk);
             DiffBlobCleanupMutations(blobSb, ref blobAllOk);
         }
 
         if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
-        if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CARD SLICE")) + 1, "✓ ALL OK\n");
+        if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB HOT SLICE")) + 1, "✓ ALL OK\n");
 
         simText = PackTwoPerLine(simSb.ToString());
         blobText = PackTwoPerLine(blobSb.ToString());
@@ -930,8 +934,58 @@ internal static class CombatDebugOverlay
         }
     }
 
-    private static void DiffBlobCardSlice(StringBuilder sb, ref bool allOk)
+    private static void DiffBlobHotSlice(StringBuilder sb, ref bool allOk)
     {
+        DiffBlobScalar(sb, "B.Round", _sim.Round, _blob.Round, ref allOk);
+        DiffBlobScalar(sb, "B.HP", _sim.PlayerHp, _blob.PlayerHp, ref allOk);
+        DiffBlobScalar(sb, "B.MaxHP", _sim.PlayerMaxHp, _blob.PlayerMaxHp, ref allOk);
+        DiffBlobScalar(sb, "B.Block", _sim.PlayerBlock, _blob.PlayerBlock, ref allOk);
+        DiffBlobScalar(sb, "B.Energy", _sim.Energy, _blob.Energy, ref allOk);
+        DiffBlobScalar(sb, "B.MaxEn", _sim.MaxEnergy, _blob.MaxEnergy, ref allOk);
+        DiffBlobScalar(sb, "B.Stars", _sim.PlayerStars, _blob.PlayerStars, ref allOk);
+        DiffBlobSpan<short>(sb, "B.PPwr",
+            SimPowerOps.GetPlayerRow(_sim),
+            SimPowerOps.GetPlayerRow(_blob),
+            ref allOk);
+        DiffBlobSpan<SimPowerInternal>(sb, "B.PPwrI",
+            MemoryMarshal.CreateReadOnlySpan(ref SimPowerOps.GetPlayerInternal(_sim), 1),
+            MemoryMarshal.CreateReadOnlySpan(ref SimPowerOps.GetPlayerInternal(_blob), 1),
+            ref allOk);
+
+        DiffBlobScalar(sb, "B.EnemyN", (byte)_sim.EnemyCount, _blob.EnemyCount, ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.EHP",
+            _sim.EnemyHp.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyHp.Slice(0, _blob.EnemyCount),
+            ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.EMax",
+            _sim.EnemyMaxHp.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyMaxHp.Slice(0, _blob.EnemyCount),
+            ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.EBlk",
+            _sim.EnemyBlock.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyBlock.Slice(0, _blob.EnemyCount),
+            ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.EDmg",
+            _sim.EnemyIntentDmg.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyIntentDmg.Slice(0, _blob.EnemyCount),
+            ref allOk);
+        DiffBlobSpan<byte>(sb, "B.EHits",
+            _sim.EnemyIntentHits.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyIntentHits.Slice(0, _blob.EnemyCount),
+            ref allOk);
+        DiffBlobSpan<byte>(sb, "B.EKind",
+            _sim.EnemyIntent.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyIntent.Slice(0, _blob.EnemyCount),
+            ref allOk);
+        DiffBlobSpan<short>(sb, "B.EPwr",
+            _sim.EnemyPowers.AsSpan(0, _sim.EnemyCount * SimCombatState.PowersPerCre),
+            _blob.EnemyPowers.Slice(0, _blob.EnemyCount * SimCombatState.PowersPerCre),
+            ref allOk);
+        DiffBlobSpan<SimPowerInternal>(sb, "B.EPwrI",
+            _sim.EnemyPowerInternal.AsSpan(0, _sim.EnemyCount),
+            _blob.EnemyPowerInternal.Slice(0, _blob.EnemyCount),
+            ref allOk);
+
         DiffBlobPile(sb, "B.Hand", _sim.Hand, _sim.HandCount, _blob.HandCards, _blob.HandCount, ref allOk);
         DiffBlobPile(sb, "B.Draw", _sim.Draw, _sim.DrawCount, _blob.DrawCards, _blob.DrawCount, ref allOk);
         DiffBlobPile(sb, "B.Disc", _sim.Disc, _sim.DiscCount, _blob.DiscCards, _blob.DiscCount, ref allOk);
@@ -1234,12 +1288,11 @@ internal static class CombatDebugOverlay
 
     /// <summary>
     /// Compare a live <see cref="PowerModel"/> list to the corresponding dense
-    /// sim row. <paramref name="rowBase"/> is the offset into <paramref name="simRow"/>
-    /// (0 for player; <c>i * PowersPerCre</c> for enemy <c>i</c>).
+    /// sim row.
     /// </summary>
     private static void DiffPowers(
         StringBuilder sb, string tag,
-        IReadOnlyList<PowerModel> live, short[] simRow, int rowBase,
+        IReadOnlyList<PowerModel> live, ReadOnlySpan<short> simRow,
         ref bool allOk)
     {
         // Live → sim direction: every live power must be reflected in the sim row.
@@ -1256,7 +1309,7 @@ internal static class CombatDebugOverlay
                 if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}: unregistered {t.Name}");
                 continue;
             }
-            short simAmt  = simRow[rowBase + idx];
+            short simAmt  = simRow[idx];
             int   liveAmt = p.Amount;
             if (simAmt != liveAmt)
             {
@@ -1268,7 +1321,7 @@ internal static class CombatDebugOverlay
         // means we wrote a phantom power. Cheap to detect; iterates 259 ints.
         for (int idx = 0; idx < SimCombatState.PowersPerCre; idx++)
         {
-            short simAmt = simRow[rowBase + idx];
+            short simAmt = simRow[idx];
             if (simAmt == 0) continue;
             // Look for matching live power.
             bool found = false;
@@ -1305,7 +1358,7 @@ internal static class CombatDebugOverlay
     /// <see cref="SimCombatState.EnemyIntent"/> byte; for Attack/DeathBlow,
     /// also verify base damage and hit count match what Snapshot computed.
     /// </summary>
-    private static void DiffIntent(StringBuilder sb, int i, Creature e, ref bool allOk)
+    private static void DiffIntent(StringBuilder sb, int i, Creature e, bool blobReady, ref bool allOk)
     {
         // Mirror the classification logic in SimCombatState.Snapshot.CaptureIntent.
         var move  = e.Monster?.NextMove;
@@ -1343,7 +1396,7 @@ internal static class CombatDebugOverlay
             }
         }
 
-        SimIntent simKind = (SimIntent)_sim.EnemyIntent[i];
+        SimIntent simKind = (SimIntent)(blobReady ? _blob.EnemyIntent[i] : _sim.EnemyIntent[i]);
         bool kindOk = simKind == liveKind;
         if (!kindOk) allOk = false;
         sb.AppendLine(kindOk
@@ -1352,8 +1405,8 @@ internal static class CombatDebugOverlay
 
         if (liveKind == SimIntent.Attack || liveKind == SimIntent.DeathBlow)
         {
-            ushort simDmg  = _sim.EnemyIntentDmg[i];
-            byte   simHits = _sim.EnemyIntentHits[i];
+            ushort simDmg  = blobReady ? _blob.EnemyIntentDmg[i] : _sim.EnemyIntentDmg[i];
+            byte   simHits = blobReady ? _blob.EnemyIntentHits[i] : _sim.EnemyIntentHits[i];
             bool   dmgOk   = simDmg  == liveDmg;
             bool   hitsOk  = simHits == liveHits;
             if (!dmgOk)  { allOk = false; sb.AppendLine($"✗ E{i}.Dmg: sim={simDmg} live={liveDmg}"); }

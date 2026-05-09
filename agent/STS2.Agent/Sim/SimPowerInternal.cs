@@ -1,3 +1,4 @@
+using System;
 using System.Runtime.InteropServices;
 
 namespace STS2.Agent.Sim;
@@ -50,7 +51,7 @@ namespace STS2.Agent.Sim;
 ///     PowerCmd.Apply path; current Snapshot path doesn't trigger it.
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 14)]
-internal struct SimPowerInternal
+internal struct SimPowerInternal : IEquatable<SimPowerInternal>
 {
     // ── Per-turn reset block (7 bytes) ───────────────────────────────────────
     /// <summary>FeralPower: zero-cost attacks played this turn (uses up Amount quota).</summary>
@@ -86,4 +87,43 @@ internal struct SimPowerInternal
     public const byte FlagNemesisShouldApplyIntangible = 0x02;
     /// <summary>RitualPower._wasJustAppliedByEnemy — set true on AfterApplied (enemy-owned), cleared on first AfterTurnEnd to suppress same-turn Strength gain.</summary>
     public const byte FlagRitualWasJustAppliedByEnemy = 0x04;
+
+    public readonly bool Equals(SimPowerInternal other)
+        => FeralZeroCostAttacks == other.FeralZeroCostAttacks
+        && JugglingAttacksThisTurn == other.JugglingAttacksThisTurn
+        && VoidFormCardsThisTurn == other.VoidFormCardsThisTurn
+        && TenderCardsThisTurn == other.TenderCardsThisTurn
+        && SlothCardsThisTurn == other.SlothCardsThisTurn
+        && HardenedShellDamageThisTurn == other.HardenedShellDamageThisTurn
+        && OutbreakTimesPoisoned == other.OutbreakTimesPoisoned
+        && OrbitEnergySpent == other.OrbitEnergySpent
+        && OrbitTriggerCount == other.OrbitTriggerCount
+        && AutomationCardsLeft == other.AutomationCardsLeft
+        && Flags == other.Flags;
+
+    public override readonly bool Equals(object? obj)
+        => obj is SimPowerInternal other && Equals(other);
+
+    public override readonly int GetHashCode()
+    {
+        HashCode hash = new();
+        hash.Add(FeralZeroCostAttacks);
+        hash.Add(JugglingAttacksThisTurn);
+        hash.Add(VoidFormCardsThisTurn);
+        hash.Add(TenderCardsThisTurn);
+        hash.Add(SlothCardsThisTurn);
+        hash.Add(HardenedShellDamageThisTurn);
+        hash.Add(OutbreakTimesPoisoned);
+        hash.Add(OrbitEnergySpent);
+        hash.Add(OrbitTriggerCount);
+        hash.Add(AutomationCardsLeft);
+        hash.Add(Flags);
+        return hash.ToHashCode();
+    }
+
+    public override readonly string ToString()
+        => $"fer={FeralZeroCostAttacks} jug={JugglingAttacksThisTurn} void={VoidFormCardsThisTurn} " +
+           $"ten={TenderCardsThisTurn} slo={SlothCardsThisTurn} hs={HardenedShellDamageThisTurn} " +
+           $"out={OutbreakTimesPoisoned} orbE={OrbitEnergySpent} orbT={OrbitTriggerCount} " +
+           $"auto={AutomationCardsLeft} fl=0x{Flags:X2}";
 }
