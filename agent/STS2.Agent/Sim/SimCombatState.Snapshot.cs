@@ -211,10 +211,15 @@ internal sealed partial class SimCombatState
             // sim outcomes this combined truth is what matters. Enchantment
             // disabled-state is packed here as well so one-shot enchantments
             // like Vigorous do not reactivate when the card moves between piles.
-            byte flags = 0;
+            ushort flags = 0;
             if (card.ExhaustOnNextPlay)    flags |= SimCard.FlagExhaustOnNextPlay;
             if (card.ShouldRetainThisTurn) flags |= SimCard.FlagShouldRetainThisTurn;
             if (card.IsSlyThisTurn)        flags |= SimCard.FlagIsSlyThisTurn;
+            if (card.Keywords.Contains(CardKeyword.Exhaust))  flags |= SimCard.FlagHasExhaustKeyword;
+            if (card.Keywords.Contains(CardKeyword.Retain))   flags |= SimCard.FlagHasRetainKeyword;
+            if (card.Keywords.Contains(CardKeyword.Innate))   flags |= SimCard.FlagHasInnateKeyword;
+            if (card.Keywords.Contains(CardKeyword.Eternal))  flags |= SimCard.FlagHasEternalKeyword;
+            if (card.Keywords.Contains(CardKeyword.Ethereal)) flags |= SimCard.FlagHasEtherealKeyword;
 
             // Enchantment: 0 = none. Unknown EnchantmentModel subclasses fall
             // through to None (SimCaps validates the registry at startup, so
