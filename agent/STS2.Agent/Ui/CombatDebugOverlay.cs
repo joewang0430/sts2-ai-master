@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using Godot;
 using HarmonyLib;
@@ -55,11 +56,14 @@ internal static class CombatDebugOverlay
     private static ColorRect? _bgDmg;
     private static Label?     _labelSim;
     private static ColorRect? _bgSim;
+    private static Label?     _labelBlob;
+    private static ColorRect? _bgBlob;
     private static CombatState? _state;
 
     // ── Snapshot verification ─────────────────────────────────────────────────
     // Reused across Refresh() calls; CopyFrom-style snapshot never allocates.
     private static readonly SimCombatState _sim = new();
+    private static readonly CombatNodeBlob _blob = new();
 
     // ── Next-turn-hand prediction state ───────────────────────────────────────
     // The prediction is computed during every Refresh() for state.RoundNumber + 1.
@@ -204,10 +208,8 @@ internal static class CombatDebugOverlay
         room.AddChild(_bgDmg);
         room.AddChild(_labelDmg);
 
-        // ── Sixth column — SIM DIFF (snapshot verification) ───────────────────
+        // ── Sixth column — SIM DIFF (legacy sim vs live state) ────────────────
         // Separated from dmg column to avoid crowding. x=1282 = 1004+270+8.
-        // Font 11 keeps line-height tight; AutowrapMode.Disabled avoids
-        // wrapping the "✓/✗ name=val" single-line entries.
         _bgSim = new ColorRect
         {
             Color       = new Color(0f, 0f, 0f, 0.65f),
@@ -227,6 +229,29 @@ internal static class CombatDebugOverlay
         _labelSim.AddThemeFontSizeOverride("font_size", 11);
         room.AddChild(_bgSim);
         room.AddChild(_labelSim);
+
+        // ── Seventh column — BLOB CARD SLICE (blob vs legacy sim) ───────────
+        // x=1580 = 1282+290+8. Separate panel keeps the hot card-slice bridge
+        // readable without diluting the live-state diff column.
+        _bgBlob = new ColorRect
+        {
+            Color       = new Color(0f, 0f, 0f, 0.65f),
+            Position    = new Vector2(1580f, 8f),
+            Size        = new Vector2(290f, 560f),
+            ZIndex      = 99,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        _labelBlob = new Label
+        {
+            Position     = new Vector2(1584f, 12f),
+            Size         = new Vector2(282f, 552f),
+            ZIndex       = 100,
+            MouseFilter  = Control.MouseFilterEnum.Ignore,
+            AutowrapMode = TextServer.AutowrapMode.Word,
+        };
+        _labelBlob.AddThemeFontSizeOverride("font_size", 11);
+        room.AddChild(_bgBlob);
+        room.AddChild(_labelBlob);
 
         // ── Third column — potion selection ───────────────────────────────────
         // Parent the interactive widgets to a CanvasLayer so their input is
@@ -302,6 +327,8 @@ internal static class CombatDebugOverlay
         _bgDmg               = null;
         _labelSim            = null;
         _bgSim               = null;
+        _labelBlob           = null;
+        _bgBlob              = null;
         _bgPotions           = null;
         _potionButtonBox     = null;
         _potionApprovedLabel = null;
@@ -335,6 +362,8 @@ internal static class CombatDebugOverlay
                 _labelDmg.Text = string.Empty;
             if (_labelSim is not null && GodotObject.IsInstanceValid(_labelSim))
                 _labelSim.Text = string.Empty;
+            if (_labelBlob is not null && GodotObject.IsInstanceValid(_labelBlob))
+                _labelBlob.Text = string.Empty;
             if (_potionApprovedLabel is not null && GodotObject.IsInstanceValid(_potionApprovedLabel))
                 _potionApprovedLabel.Text = string.Empty;
             return;
@@ -349,8 +378,17 @@ internal static class CombatDebugOverlay
                 _labelPredict.Text = BuildPredictionText(_state);
             if (_labelDmg is not null && GodotObject.IsInstanceValid(_labelDmg))
                 _labelDmg.Text = BuildDmgPreviewText(_state);
-            if (_labelSim is not null && GodotObject.IsInstanceValid(_labelSim))
-                _labelSim.Text = BuildSimDiffText(_state);
+
+            bool hasSimPanel = _labelSim is not null && GodotObject.IsInstanceValid(_labelSim);
+            bool hasBlobPanel = _labelBlob is not null && GodotObject.IsInstanceValid(_labelBlob);
+            if (hasSimPanel || hasBlobPanel)
+            {
+                BuildSnapshotDiffTexts(_state, out string simDiffText, out string blobDiffText);
+                if (hasSimPanel)
+                    _labelSim!.Text = simDiffText;
+                if (hasBlobPanel)
+                    _labelBlob!.Text = blobDiffText;
+            }
 
             // Detect divergence between our tracked potions and the live list:
             //   - CombatSetUp may fire before _Ready, or Player.Potions may be
@@ -606,11 +644,18 @@ internal static class CombatDebugOverlay
     /// always visible without extra UI. One line per field: "✓" when sim==live,
     /// "✗ sim=X live=Y" when not. Shows "SIM OK" header when all pass.
     /// </summary>
-    private static string BuildSimDiffText(CombatState state)
+    private static void BuildSnapshotDiffTexts(CombatState state, out string simText, out string blobText)
     {
-        var sb = new StringBuilder(512);
-        sb.AppendLine();
-        sb.AppendLine("── SIM DIFF ─────────────");
+        var simSb = new StringBuilder(512);
+        var blobSb = new StringBuilder(256);
+        simSb.AppendLine();
+        simSb.AppendLine("── SIM DIFF ─────────────");
+        blobSb.AppendLine();
+        blobSb.AppendLine("── BLOB CARD SLICE ─────");
+
+        bool simAllOk = true;
+        bool blobAllOk = true;
+        bool blobReady = false;
 
         try
         {
@@ -618,24 +663,46 @@ internal static class CombatDebugOverlay
         }
         catch (Exception ex)
         {
-            sb.AppendLine($"Snapshot() threw:\n{ex.Message}");
-            return sb.ToString();
+            simSb.AppendLine($"Snapshot() threw:\n{ex.Message}");
+            blobSb.AppendLine($"Snapshot() blocked blob:\n{ex.Message}");
+            simText = simSb.ToString();
+            blobText = blobSb.ToString();
+            return;
+        }
+
+        try
+        {
+            CombatNodeBlobSnapshot.WriteCardSliceFromSim(_sim, _blob);
+            blobReady = true;
+        }
+        catch (Exception ex)
+        {
+            blobAllOk = false;
+            blobSb.AppendLine($"✗ Blob.Write threw: {ex.Message}");
         }
 
         Player? me = LocalContext.GetMe(state);
-        if (me is null) { sb.AppendLine("(no local player)"); return sb.ToString(); }
+        if (me is null)
+        {
+            simSb.AppendLine("(no local player)");
+            if (blobReady)
+                DiffBlobCardSlice(blobSb, ref blobAllOk);
+            if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
+            if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CARD SLICE")) + 1, "✓ ALL OK\n");
+            simText = PackTwoPerLine(simSb.ToString());
+            blobText = PackTwoPerLine(blobSb.ToString());
+            return;
+        }
 
         Creature pc = me.Creature;
         PlayerCombatState? pcs = me.PlayerCombatState;
-
-        bool allOk = true;
 
         // Helper: append one comparison line, update allOk flag.
         void Cmp(string name, object simVal, object liveVal)
         {
             bool ok = simVal.ToString() == liveVal.ToString();
-            if (!ok) allOk = false;
-            sb.AppendLine(ok
+            if (!ok) simAllOk = false;
+            simSb.AppendLine(ok
                 ? $"✓ {name}={simVal}"
                 : $"✗ {name}: sim={simVal} live={liveVal}");
         }
@@ -681,8 +748,8 @@ internal static class CombatDebugOverlay
                                              && simHasLocal == liveHasLocal
                                              && simX == liveX
                                              && simCapturedX == liveCapturedX;
-                if (!ok) allOk = false;
-                sb.AppendLine(ok
+                if (!ok) simAllOk = false;
+                simSb.AppendLine(ok
                                         ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}" +
                                             $" costL={simLocalCost}{(simHasLocal ? "*" : "")}{(simX ? $" X={simCapturedX}" : string.Empty)}"
                                         : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
@@ -694,15 +761,15 @@ internal static class CombatDebugOverlay
             // Bulk pile diff: scan every card, summarize. A full per-card dump
             // would blow past column height for 50+ card decks; instead show
             // total mismatch count and the first few offenders.
-            DiffPile(sb, "Draw", _sim.Draw, _sim.DrawCount, pcs.DrawPile.Cards,    ref allOk);
-            DiffPile(sb, "Disc", _sim.Disc, _sim.DiscCount, pcs.DiscardPile.Cards, ref allOk);
-            DiffPile(sb, "Exh",  _sim.Exhaust, _sim.ExhaustCount, pcs.ExhaustPile.Cards, ref allOk);
+            DiffPile(simSb, "Draw", _sim.Draw, _sim.DrawCount, pcs.DrawPile.Cards,    ref simAllOk);
+            DiffPile(simSb, "Disc", _sim.Disc, _sim.DiscCount, pcs.DiscardPile.Cards, ref simAllOk);
+            DiffPile(simSb, "Exh",  _sim.Exhaust, _sim.ExhaustCount, pcs.ExhaustPile.Cards, ref simAllOk);
         }
 
         // ── Player powers: walk live list, look up sim slot via registry,
         //    compare amount. Powers not in the registry (e.g. game-data drift,
         //    or *.Powers.Mocks if any leak) are flagged once.
-        DiffPowers(sb, "P.Pwr", pc.Powers, _sim.PlayerPowers, 0, ref allOk);
+        DiffPowers(simSb, "P.Pwr", pc.Powers, _sim.PlayerPowers, 0, ref simAllOk);
 
         // Enemy counts + HP/Block/Intent for each.
         Cmp("EnemyN", _sim.EnemyCount, state.Enemies.Count);
@@ -715,21 +782,27 @@ internal static class CombatDebugOverlay
             Cmp($"E{i}.Block", _sim.EnemyBlock[i],  e.Block);
 
             // Intent kind / damage / hits.
-            DiffIntent(sb, i, e, ref allOk);
+            DiffIntent(simSb, i, e, ref simAllOk);
 
             // Per-enemy power row.
-            DiffPowers(sb, $"E{i}.Pwr", e.Powers, _sim.EnemyPowers,
-                       i * SimCombatState.PowersPerCre, ref allOk);
+            DiffPowers(simSb, $"E{i}.Pwr", e.Powers, _sim.EnemyPowers,
+                       i * SimCombatState.PowersPerCre, ref simAllOk);
         }
 
         // ── RNG: re-capture every in-combat stream and byte-compare to
         //    the sim's stored copy. Equality proves Snapshot wrote each
         //    Knuth state (56-int seedArray + 2 cursors) bit-exact, which is
         //    the precondition for offline replay during DFS search.
-        DiffAllRng(sb, state, ref allOk);
+        DiffAllRng(simSb, state, ref simAllOk);
 
-        if (allOk) sb.Insert(sb.ToString().IndexOf('\n', sb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
-        return PackTwoPerLine(sb.ToString());
+        if (blobReady)
+            DiffBlobCardSlice(blobSb, ref blobAllOk);
+
+        if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("SIM DIFF")) + 1, "✓ ALL OK\n");
+        if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CARD SLICE")) + 1, "✓ ALL OK\n");
+
+        simText = PackTwoPerLine(simSb.ToString());
+        blobText = PackTwoPerLine(blobSb.ToString());
     }
 
     /// <summary>
@@ -828,6 +901,180 @@ internal static class CombatDebugOverlay
             if (firstMismatches.Length > 0) sb.Append(firstMismatches);
         }
     }
+
+    private static void DiffBlobCardSlice(StringBuilder sb, ref bool allOk)
+    {
+        DiffBlobPile(sb, "B.Hand", _sim.Hand, _sim.HandCount, _blob.HandCards, _blob.HandCount, ref allOk);
+        DiffBlobPile(sb, "B.Draw", _sim.Draw, _sim.DrawCount, _blob.DrawCards, _blob.DrawCount, ref allOk);
+        DiffBlobPile(sb, "B.Disc", _sim.Disc, _sim.DiscCount, _blob.DiscCards, _blob.DiscCount, ref allOk);
+        DiffBlobPile(sb, "B.Exh", _sim.Exhaust, _sim.ExhaustCount, _blob.ExhaustCards, _blob.ExhaustCount, ref allOk);
+
+        DiffBlobScalar(sb, "B.InstN", _sim.CardInstanceCount, _blob.CardInstanceCount, ref allOk);
+        DiffBlobScalar(sb, "B.ModUsed", _sim.CardEnergyModifierUsed, _blob.CardEnergyModifierUsed, ref allOk);
+
+        int cardSidecarLength = _sim.CardInstanceCount + 1;
+        DiffBlobSpan<short>(sb, "B.EBase",
+            _sim.CardEnergyBaseCost.AsSpan(0, cardSidecarLength),
+            _blob.CardEnergyBaseCost.Slice(0, cardSidecarLength),
+            ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.EX",
+            _sim.CardEnergyCapturedX.AsSpan(0, cardSidecarLength),
+            _blob.CardEnergyCapturedX.Slice(0, cardSidecarLength),
+            ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.EStart",
+            _sim.CardEnergyModifierStart.AsSpan(0, cardSidecarLength),
+            _blob.CardEnergyModifierStart.Slice(0, cardSidecarLength),
+            ref allOk);
+        DiffBlobSpan<ushort>(sb, "B.ECount",
+            _sim.CardEnergyModifierCount.AsSpan(0, cardSidecarLength),
+            _blob.CardEnergyModifierCount.Slice(0, cardSidecarLength),
+            ref allOk);
+        DiffBlobModifierSpan(sb, "B.EMod",
+            _sim.CardEnergyModifiers.AsSpan(0, _sim.CardEnergyModifierUsed),
+            _blob.CardEnergyModifiers.Slice(0, _blob.CardEnergyModifierUsed),
+            ref allOk);
+    }
+
+    private static void DiffBlobPile(
+        StringBuilder sb, string tag,
+        SimCard[] legacySlice, int legacyCount,
+        Span<SimCard> blobSlice, int blobCount,
+        ref bool allOk)
+    {
+        ReadOnlySpan<SimCard> legacy = legacySlice.AsSpan(0, legacyCount);
+        ReadOnlySpan<SimCard> blob = blobSlice.Slice(0, blobCount);
+        if (legacyCount == blobCount
+            && MemoryMarshal.AsBytes(legacy).SequenceEqual(MemoryMarshal.AsBytes(blob)))
+        {
+            sb.AppendLine($"✓ {tag}({legacyCount})");
+            return;
+        }
+
+        allOk = false;
+        int diffs = legacyCount == blobCount ? 0 : 1;
+        var firstMismatches = new StringBuilder(64);
+        int n = Math.Min(legacyCount, blobCount);
+        for (int i = 0; i < n; i++)
+        {
+            if (SimCardEquals(in legacy[i], in blob[i]))
+                continue;
+
+            if (diffs < 3)
+            {
+                firstMismatches.AppendLine(
+                    $"  ✗ {tag}[{i}]: sim={DescribeSimCard(in legacy[i])} blob={DescribeSimCard(in blob[i])}");
+            }
+            diffs++;
+        }
+
+        sb.AppendLine($"✗ {tag}: {diffs} diff(s), simN={legacyCount} blobN={blobCount}");
+        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
+    }
+
+    private static void DiffBlobScalar<T>(StringBuilder sb, string tag, T legacy, T blob, ref bool allOk)
+        where T : struct, IEquatable<T>
+    {
+        if (legacy.Equals(blob))
+        {
+            sb.AppendLine($"✓ {tag}={legacy}");
+            return;
+        }
+
+        allOk = false;
+        sb.AppendLine($"✗ {tag}: sim={legacy} blob={blob}");
+    }
+
+    private static void DiffBlobSpan<T>(
+        StringBuilder sb,
+        string tag,
+        ReadOnlySpan<T> legacy,
+        ReadOnlySpan<T> blob,
+        ref bool allOk)
+        where T : unmanaged, IEquatable<T>
+    {
+        if (legacy.Length == blob.Length
+            && MemoryMarshal.AsBytes(legacy).SequenceEqual(MemoryMarshal.AsBytes(blob)))
+        {
+            sb.AppendLine($"✓ {tag}({legacy.Length})");
+            return;
+        }
+
+        allOk = false;
+        int diffs = legacy.Length == blob.Length ? 0 : 1;
+        var firstMismatches = new StringBuilder(64);
+        int n = Math.Min(legacy.Length, blob.Length);
+        for (int i = 0; i < n; i++)
+        {
+            if (legacy[i].Equals(blob[i]))
+                continue;
+
+            if (diffs < 3)
+                firstMismatches.AppendLine($"  ✗ {tag}[{i}]: sim={legacy[i]} blob={blob[i]}");
+            diffs++;
+        }
+
+        sb.AppendLine($"✗ {tag}: {diffs} diff(s), simN={legacy.Length} blobN={blob.Length}");
+        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
+    }
+
+    private static void DiffBlobModifierSpan(
+        StringBuilder sb,
+        string tag,
+        ReadOnlySpan<SimLocalCostModifier> legacy,
+        ReadOnlySpan<SimLocalCostModifier> blob,
+        ref bool allOk)
+    {
+        if (legacy.Length == blob.Length
+            && MemoryMarshal.AsBytes(legacy).SequenceEqual(MemoryMarshal.AsBytes(blob)))
+        {
+            sb.AppendLine($"✓ {tag}({legacy.Length})");
+            return;
+        }
+
+        allOk = false;
+        int diffs = legacy.Length == blob.Length ? 0 : 1;
+        var firstMismatches = new StringBuilder(64);
+        int n = Math.Min(legacy.Length, blob.Length);
+        for (int i = 0; i < n; i++)
+        {
+            if (SimLocalCostModifierEquals(in legacy[i], in blob[i]))
+                continue;
+
+            if (diffs < 3)
+            {
+                firstMismatches.AppendLine(
+                    $"  ✗ {tag}[{i}]: sim={DescribeModifier(in legacy[i])} blob={DescribeModifier(in blob[i])}");
+            }
+            diffs++;
+        }
+
+        sb.AppendLine($"✗ {tag}: {diffs} diff(s), simN={legacy.Length} blobN={blob.Length}");
+        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
+    }
+
+    private static bool SimCardEquals(in SimCard left, in SimCard right)
+        => left.CardId == right.CardId
+        && left.InstanceId == right.InstanceId
+        && left.BaseStarCost == right.BaseStarCost
+        && left.LastStarsSpent == right.LastStarsSpent
+        && left.BaseReplayCount == right.BaseReplayCount
+        && left.Flags == right.Flags
+        && left.EnchantmentId == right.EnchantmentId
+        && left.EnchantmentAmount == right.EnchantmentAmount
+        && left.AfflictionId == right.AfflictionId
+        && left.AfflictionAmount == right.AfflictionAmount;
+
+    private static bool SimLocalCostModifierEquals(in SimLocalCostModifier left, in SimLocalCostModifier right)
+        => left.Amount == right.Amount
+        && left.Flags == right.Flags;
+
+    private static string DescribeSimCard(in SimCard card)
+        => $"{ReverseCardName(card.BaseCardId)}{(card.IsUpgraded ? "+" : string.Empty)}" +
+           $"#iid={card.InstanceId} star={card.BaseStarCost} spent={card.LastStarsSpent} rep={card.BaseReplayCount} " +
+           $"flags=0x{card.Flags:X} enc={card.EnchantmentId}:{card.EnchantmentAmount} aff={card.AfflictionId}:{card.AfflictionAmount}";
+
+    private static string DescribeModifier(in SimLocalCostModifier modifier)
+        => $"amt={modifier.Amount} type={modifier.Type} exp={modifier.Expiration} reduce={modifier.IsReduceOnly}";
 
     /// <summary>
     /// Compare a live <see cref="PowerModel"/> list to the corresponding dense
