@@ -10,7 +10,7 @@ namespace STS2.Agent.Sim;
 /// turn-scoped summary surface cheaply in the blob while leaving
 /// identity-sensitive history for a later slice.
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 32)]
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 40)]
 internal struct SimHistoryCounters
 {
     public ushort CardsStartedThisTurn;
@@ -28,6 +28,10 @@ internal struct SimHistoryCounters
     public ushort PositiveStarsGainedThisTurn;
     public ushort BoundAfflictionsThisTurn;
     public ushort DoomAppliedByPlayerThisTurn;
+    public ushort CardsFinishedAllCombat;
+    public ushort CardsFinishedPreviousRound;
+    public ushort EtherealCardsFinishedAllCombat;
+    public ushort CardsDrawnAllCombat;
     public byte Flags;
     public byte Reserved;
 

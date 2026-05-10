@@ -17,6 +17,7 @@ internal static class CombatSchemaV1
 
     public static readonly int SimCardSize = Unsafe.SizeOf<SimCard>();
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
+    public static readonly int SimTemporaryStarCostSize = Unsafe.SizeOf<SimTemporaryStarCost>();
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
     public static readonly int SimEnemyMoveSMSize = Unsafe.SizeOf<SimEnemyMoveSM>();
     public static readonly int SimPetSize = Unsafe.SizeOf<SimPet>();
@@ -41,6 +42,13 @@ internal static class CombatSchemaV1
                 "Energy sidecar layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
+        if (SimTemporaryStarCostSize != 1)
+        {
+            throw new InvalidOperationException(
+            $"CombatSchemaV1: expected SimTemporaryStarCost size 1, got {SimTemporaryStarCostSize}. " +
+                "Temporary star-cost sidecar layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
         if (SimPowerInternalSize != 14)
         {
             throw new InvalidOperationException(
@@ -62,10 +70,10 @@ internal static class CombatSchemaV1
                 "Pet layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
-        if (SimHistoryCountersSize != 32)
+        if (SimHistoryCountersSize != 40)
         {
             throw new InvalidOperationException(
-                $"CombatSchemaV1: expected SimHistoryCounters size 32, got {SimHistoryCountersSize}. " +
+            $"CombatSchemaV1: expected SimHistoryCounters size 40, got {SimHistoryCountersSize}. " +
                 "History-counter layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
@@ -90,18 +98,22 @@ internal static class CombatSchemaV1
         public const int PileCap = CombatSimLayout.PileCap;
         public const int CardInstanceCap = CombatSimLayout.CardInstanceCap;
         public const int CardEnergyModifierCap = CombatSimLayout.CardEnergyModifierCap;
+        public const int CardTemporaryStarCostCap = CombatSimLayout.CardTemporaryStarCostCap;
 
         public static readonly int HandBytes = HandCap * CombatSchemaV1.SimCardSize;
         public static readonly int DrawBytes = PileCap * CombatSchemaV1.SimCardSize;
         public static readonly int DiscBytes = PileCap * CombatSchemaV1.SimCardSize;
         public static readonly int ExhaustBytes = PileCap * CombatSchemaV1.SimCardSize;
 
-        public static readonly int CountsBytes = sizeof(ushort) * 6; // hand/draw/disc/exhaust + instanceCount + modifierUsed
+        public static readonly int CountsBytes = sizeof(ushort) * 7; // hand/draw/disc/exhaust + instanceCount + energyModifierUsed + tempStarUsed
         public static readonly int EnergyBaseBytes = (CardInstanceCap + 1) * sizeof(short);
         public static readonly int EnergyCapturedXBytes = (CardInstanceCap + 1) * sizeof(ushort);
         public static readonly int EnergyModifierStartBytes = (CardInstanceCap + 1) * sizeof(ushort);
         public static readonly int EnergyModifierCountBytes = (CardInstanceCap + 1) * sizeof(ushort);
         public static readonly int EnergyModifierBytes = CardEnergyModifierCap * CombatSchemaV1.SimLocalCostModifierSize;
+        public static readonly int TemporaryStarCostStartBytes = (CardInstanceCap + 1) * sizeof(ushort);
+        public static readonly int TemporaryStarCostCountBytes = (CardInstanceCap + 1) * sizeof(ushort);
+        public static readonly int TemporaryStarCostBytes = CardTemporaryStarCostCap * CombatSchemaV1.SimTemporaryStarCostSize;
 
         public static readonly int HandOffset;
         public static readonly int DrawOffset;
@@ -113,11 +125,15 @@ internal static class CombatSchemaV1
         public static readonly int ExhaustCountOffset;
         public static readonly int CardInstanceCountOffset;
         public static readonly int CardEnergyModifierUsedOffset;
+        public static readonly int CardTemporaryStarCostUsedOffset;
         public static readonly int CardEnergyBaseOffset;
         public static readonly int CardEnergyCapturedXOffset;
         public static readonly int CardEnergyModifierStartOffset;
         public static readonly int CardEnergyModifierCountOffset;
         public static readonly int CardEnergyModifiersOffset;
+        public static readonly int CardTemporaryStarCostStartOffset;
+        public static readonly int CardTemporaryStarCostCountOffset;
+        public static readonly int CardTemporaryStarCostsOffset;
         public static readonly int TotalBytes;
 
         static Cards()
@@ -156,6 +172,9 @@ internal static class CombatSchemaV1
             CardEnergyModifierUsedOffset = offset;
             offset += sizeof(ushort);
 
+            CardTemporaryStarCostUsedOffset = offset;
+            offset += sizeof(ushort);
+
             CardEnergyBaseOffset = offset;
             offset += EnergyBaseBytes;
 
@@ -170,6 +189,15 @@ internal static class CombatSchemaV1
 
             CardEnergyModifiersOffset = offset;
             offset += EnergyModifierBytes;
+
+            CardTemporaryStarCostStartOffset = offset;
+            offset += TemporaryStarCostStartBytes;
+
+            CardTemporaryStarCostCountOffset = offset;
+            offset += TemporaryStarCostCountBytes;
+
+            CardTemporaryStarCostsOffset = offset;
+            offset += TemporaryStarCostBytes;
 
             TotalBytes = offset;
         }
@@ -314,6 +342,7 @@ internal static class CombatSchemaV1
         public static readonly int OstyPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
         public static readonly int OstyPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
         public static readonly int HistoryCountersBytes = CombatSchemaV1.SimHistoryCountersSize;
+        public static readonly int HistoryCourseCardBytes = CombatSchemaV1.SimCardSize;
         public static readonly int RngBytes = CombatSchemaV1.RandomStateBufferSize;
 
         public static readonly int OrbSlotsOffset;
@@ -323,6 +352,7 @@ internal static class CombatSchemaV1
         public static readonly int OstyPowersOffset;
         public static readonly int OstyPowerInternalOffset;
         public static readonly int HistoryCountersOffset;
+        public static readonly int HistoryCourseCardOffset;
         public static readonly int RngOffset;
         public static readonly int TotalBytes;
 
@@ -358,6 +388,9 @@ internal static class CombatSchemaV1
 
             HistoryCountersOffset = offset;
             offset += HistoryCountersBytes;
+
+            HistoryCourseCardOffset = offset;
+            offset += HistoryCourseCardBytes;
 
             offset = AlignUp(offset, sizeof(int));
 

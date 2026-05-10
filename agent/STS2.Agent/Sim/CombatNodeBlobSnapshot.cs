@@ -27,8 +27,12 @@ internal static class CombatNodeBlobSnapshot
     private static readonly FieldInfo s_cardEnergyLocalModifiersField =
         typeof(CardEnergyCost).GetField("_localModifiers", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("CombatNodeBlobSnapshot: CardEnergyCost._localModifiers field not found.");
+    private static readonly FieldInfo s_cardTemporaryStarCostsField =
+        typeof(CardModel).GetField("_temporaryStarCosts", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("CombatNodeBlobSnapshot: CardModel._temporaryStarCosts field not found.");
 
     private static readonly Dictionary<CardModel, ushort> s_cardPlayHistoryFlags = new(ReferenceEqualityComparer.Instance);
+    private static readonly Dictionary<CardModel, ushort> s_cardInstanceIds = new(ReferenceEqualityComparer.Instance);
 
     public static void WriteV1FromCombatState(CombatState combat, CombatNodeBlob dst, int playerIdx = 0, CoopMode coop = CoopMode.SoloRoot)
     {
@@ -61,12 +65,21 @@ internal static class CombatNodeBlobSnapshot
         SimHistoryCounterOps.CaptureLive(combat, player, ref historyCounters);
         dst.HistoryCounters = historyCounters;
         SimHistoryCounterOps.CaptureCardPlayFlags(combat, player, s_cardPlayHistoryFlags);
+        s_cardInstanceIds.Clear();
 
         ushort nextCardInstanceId = 1;
-        dst.HandCount = SnapshotPile(pcs.Hand, dst.HandCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
-        dst.DrawCount = SnapshotPile(pcs.DrawPile, dst.DrawCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
-        dst.DiscCount = SnapshotPile(pcs.DiscardPile, dst.DiscCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
-        dst.ExhaustCount = SnapshotPile(pcs.ExhaustPile, dst.ExhaustCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
+        dst.HandCount = SnapshotPile(pcs.Hand, dst.HandCards, dst, s_cardPlayHistoryFlags, s_cardInstanceIds, ref nextCardInstanceId);
+        dst.DrawCount = SnapshotPile(pcs.DrawPile, dst.DrawCards, dst, s_cardPlayHistoryFlags, s_cardInstanceIds, ref nextCardInstanceId);
+        dst.DiscCount = SnapshotPile(pcs.DiscardPile, dst.DiscCards, dst, s_cardPlayHistoryFlags, s_cardInstanceIds, ref nextCardInstanceId);
+        dst.ExhaustCount = SnapshotPile(pcs.ExhaustPile, dst.ExhaustCards, dst, s_cardPlayHistoryFlags, s_cardInstanceIds, ref nextCardInstanceId);
+
+        CardModel? historyCourseSource = SimHistoryCounterOps.ReadHistoryCourseSourceCard(combat, player);
+        if (historyCourseSource != null)
+        {
+            ushort sharedInstanceId = s_cardInstanceIds.GetValueOrDefault(historyCourseSource);
+            dst.HistoryCourseCard = SnapshotCard(historyCourseSource, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId, sharedInstanceId);
+        }
+
         dst.CardInstanceCount = (ushort)(nextCardInstanceId - 1);
 
         var enemies = combat.Enemies;
@@ -149,6 +162,7 @@ internal static class CombatNodeBlobSnapshot
         Span<SimCard> dst,
         CombatNodeBlob blob,
         Dictionary<CardModel, ushort> cardHistoryFlags,
+        Dictionary<CardModel, ushort> cardInstanceIds,
         ref ushort nextCardInstanceId)
     {
         var cards = pile.Cards;
@@ -162,68 +176,83 @@ internal static class CombatNodeBlobSnapshot
         for (int i = 0; i < count; i++)
         {
             CardModel card = cards[i];
-
-            ushort id = SimCardDb.GetId(card.GetType());
-            if (card.IsUpgraded) id |= 0x8000;
-
-            ushort flags = 0;
-            if (card.ExhaustOnNextPlay)    flags |= SimCard.FlagExhaustOnNextPlay;
-            if (card.ShouldRetainThisTurn) flags |= SimCard.FlagShouldRetainThisTurn;
-            if (card.IsSlyThisTurn)        flags |= SimCard.FlagIsSlyThisTurn;
-            if (card.Keywords.Contains(CardKeyword.Exhaust))  flags |= SimCard.FlagHasExhaustKeyword;
-            if (card.Keywords.Contains(CardKeyword.Retain))   flags |= SimCard.FlagHasRetainKeyword;
-            if (card.Keywords.Contains(CardKeyword.Innate))   flags |= SimCard.FlagHasInnateKeyword;
-            if (card.Keywords.Contains(CardKeyword.Eternal))  flags |= SimCard.FlagHasEternalKeyword;
-            if (card.Keywords.Contains(CardKeyword.Ethereal)) flags |= SimCard.FlagHasEtherealKeyword;
-            if (card.EnergyCost.CostsX)                       flags |= SimCard.FlagHasEnergyCostX;
-            if (card.IsDupe)                                  flags |= SimCard.FlagIsDupe;
-            if (cardHistoryFlags.TryGetValue(card, out ushort historyFlags))
-                flags |= historyFlags;
-
-            byte encId = 0;
-            byte encAmt = 0;
-            EnchantmentModel? enchantment = card.Enchantment;
-            if (enchantment != null)
-            {
-                encId = SimEnchantmentRegistry.GetIndexOrNone(enchantment.GetType());
-                encAmt = ClampU8(enchantment.Amount);
-                if (enchantment.Status == EnchantmentStatus.Disabled)
-                    flags |= SimCard.FlagEnchantmentDisabled;
-            }
-
-            byte affId = 0;
-            byte affAmt = 0;
-            AfflictionModel? affliction = card.Affliction;
-            if (affliction != null)
-            {
-                affId = SimAfflictionRegistry.GetIndexOrNone(affliction.GetType());
-                affAmt = ClampU8(affliction.Amount);
-
-                if (affliction is Devoured devoured && devoured.AppliedExhaust)
-                    flags |= SimCard.FlagAfflictionAppliedExhaust;
-                if (affliction is Hexed hexed && hexed.AppliedEthereal)
-                    flags |= SimCard.FlagAfflictionAppliedEthereal;
-            }
-
-            ushort instanceId = AllocateCardInstanceId(ref nextCardInstanceId);
-            SnapshotCardEnergyState(card, instanceId, blob);
-
-            dst[i] = new SimCard
-            {
-                CardId = id,
-                InstanceId = instanceId,
-                BaseStarCost = ClampS8(card.BaseStarCost),
-                LastStarsSpent = ClampU8(card.LastStarsSpent),
-                BaseReplayCount = ClampU8(card.BaseReplayCount),
-                Flags = flags,
-                EnchantmentId = encId,
-                EnchantmentAmount = encAmt,
-                AfflictionId = affId,
-                AfflictionAmount = affAmt,
-            };
+            SimCard simCard = SnapshotCard(card, blob, cardHistoryFlags, ref nextCardInstanceId);
+            cardInstanceIds[card] = simCard.InstanceId;
+            dst[i] = simCard;
         }
 
         return (ushort)count;
+    }
+
+    private static SimCard SnapshotCard(
+        CardModel card,
+        CombatNodeBlob blob,
+        Dictionary<CardModel, ushort> cardHistoryFlags,
+        ref ushort nextCardInstanceId,
+        ushort existingInstanceId = 0)
+    {
+        ushort id = SimCardDb.GetId(card.GetType());
+        if (card.IsUpgraded) id |= 0x8000;
+
+        ushort flags = 0;
+        if (card.ExhaustOnNextPlay)    flags |= SimCard.FlagExhaustOnNextPlay;
+        if (card.ShouldRetainThisTurn) flags |= SimCard.FlagShouldRetainThisTurn;
+        if (card.IsSlyThisTurn)        flags |= SimCard.FlagIsSlyThisTurn;
+        if (card.Keywords.Contains(CardKeyword.Exhaust))  flags |= SimCard.FlagHasExhaustKeyword;
+        if (card.Keywords.Contains(CardKeyword.Retain))   flags |= SimCard.FlagHasRetainKeyword;
+        if (card.Keywords.Contains(CardKeyword.Innate))   flags |= SimCard.FlagHasInnateKeyword;
+        if (card.Keywords.Contains(CardKeyword.Eternal))  flags |= SimCard.FlagHasEternalKeyword;
+        if (card.Keywords.Contains(CardKeyword.Ethereal)) flags |= SimCard.FlagHasEtherealKeyword;
+        if (card.EnergyCost.CostsX)                       flags |= SimCard.FlagHasEnergyCostX;
+        if (card.IsDupe)                                  flags |= SimCard.FlagIsDupe;
+        if (cardHistoryFlags.TryGetValue(card, out ushort historyFlags))
+            flags |= historyFlags;
+
+        byte encId = 0;
+        byte encAmt = 0;
+        EnchantmentModel? enchantment = card.Enchantment;
+        if (enchantment != null)
+        {
+            encId = SimEnchantmentRegistry.GetIndexOrNone(enchantment.GetType());
+            encAmt = ClampU8(enchantment.Amount);
+            if (enchantment.Status == EnchantmentStatus.Disabled)
+                flags |= SimCard.FlagEnchantmentDisabled;
+        }
+
+        byte affId = 0;
+        byte affAmt = 0;
+        AfflictionModel? affliction = card.Affliction;
+        if (affliction != null)
+        {
+            affId = SimAfflictionRegistry.GetIndexOrNone(affliction.GetType());
+            affAmt = ClampU8(affliction.Amount);
+
+            if (affliction is Devoured devoured && devoured.AppliedExhaust)
+                flags |= SimCard.FlagAfflictionAppliedExhaust;
+            if (affliction is Hexed hexed && hexed.AppliedEthereal)
+                flags |= SimCard.FlagAfflictionAppliedEthereal;
+        }
+
+        ushort instanceId = existingInstanceId != 0 ? existingInstanceId : AllocateCardInstanceId(ref nextCardInstanceId);
+        if (existingInstanceId == 0)
+        {
+            SnapshotCardEnergyState(card, instanceId, blob);
+            SnapshotCardTemporaryStarCostState(card, instanceId, blob);
+        }
+
+        return new SimCard
+        {
+            CardId = id,
+            InstanceId = instanceId,
+            BaseStarCost = ClampS8(card.BaseStarCost),
+            LastStarsSpent = ClampU8(card.LastStarsSpent),
+            BaseReplayCount = ClampU8(card.BaseReplayCount),
+            Flags = flags,
+            EnchantmentId = encId,
+            EnchantmentAmount = encAmt,
+            AfflictionId = affId,
+            AfflictionAmount = affAmt,
+        };
     }
 
     private static void SnapshotCardEnergyState(CardModel card, ushort instanceId, CombatNodeBlob blob)
@@ -256,6 +285,34 @@ internal static class CombatNodeBlobSnapshot
         blob.CardEnergyModifierCount[instanceId] = (ushort)count;
         for (int i = 0; i < count; i++)
             blob.CardEnergyModifiers[modifierUsed++] = SimLocalCostModifier.From(localModifiers[i]);
+    }
+
+    private static void SnapshotCardTemporaryStarCostState(CardModel card, ushort instanceId, CombatNodeBlob blob)
+    {
+        if (instanceId == 0 || instanceId > CombatSchemaV1.Cards.CardInstanceCap)
+        {
+            throw new InvalidOperationException(
+                $"CombatNodeBlobSnapshot: card instance id {instanceId} exceeds CardInstanceCap={CombatSchemaV1.Cards.CardInstanceCap}.");
+        }
+
+        ref ushort used = ref blob.CardTemporaryStarCostUsed;
+        blob.CardTemporaryStarCostStart[instanceId] = used;
+
+        List<TemporaryCardCost> temporaryStarCosts =
+            (List<TemporaryCardCost>?)s_cardTemporaryStarCostsField.GetValue(card)
+            ?? throw new InvalidOperationException("CombatNodeBlobSnapshot: CardModel._temporaryStarCosts was null.");
+
+        int count = temporaryStarCosts.Count;
+        if (used + count > CombatSchemaV1.Cards.CardTemporaryStarCostCap)
+        {
+            throw new InvalidOperationException(
+                $"CombatNodeBlobSnapshot: temporary star costs overflowed CardTemporaryStarCostCap={CombatSchemaV1.Cards.CardTemporaryStarCostCap}. " +
+                $"Used={used}, incoming={count}, card={card.Id.Entry}.");
+        }
+
+        blob.CardTemporaryStarCostCount[instanceId] = (ushort)count;
+        for (int i = 0; i < count; i++)
+            blob.CardTemporaryStarCosts[used++] = SimTemporaryStarCost.From(temporaryStarCosts[i]);
     }
 
     private static ushort AllocateCardInstanceId(ref ushort nextCardInstanceId)

@@ -47,11 +47,24 @@ internal static class SimHistoryCounterOps
                         dst.SkillsFinishedThisTurn = ClampInc(dst.SkillsFinishedThisTurn);
                     break;
 
+                case CardPlayFinishedEntry finished when finished.Actor == actor:
+                    dst.CardsFinishedAllCombat = ClampInc(dst.CardsFinishedAllCombat);
+                    if (finished.RoundNumber == combat.RoundNumber - 1)
+                        dst.CardsFinishedPreviousRound = ClampInc(dst.CardsFinishedPreviousRound);
+                    if (finished.WasEthereal)
+                        dst.EtherealCardsFinishedAllCombat = ClampInc(dst.EtherealCardsFinishedAllCombat);
+                    break;
+
                 case CardDrawnEntry drawn when drawn.Actor == actor && drawn.HappenedThisTurn(combat):
+                    dst.CardsDrawnAllCombat = ClampInc(dst.CardsDrawnAllCombat);
                     if (!drawn.FromHandDraw)
                         dst.NonHandDrawsThisTurn = ClampInc(dst.NonHandDrawsThisTurn);
                     if (drawn.Card.Type == CardType.Status)
                         dst.StatusDrawsThisTurn = ClampInc(dst.StatusDrawsThisTurn);
+                    break;
+
+                case CardDrawnEntry drawn when drawn.Actor == actor:
+                    dst.CardsDrawnAllCombat = ClampInc(dst.CardsDrawnAllCombat);
                     break;
 
                 case CardExhaustedEntry exhausted when exhausted.Card.Owner == player && exhausted.HappenedThisTurn(combat):
@@ -130,6 +143,33 @@ internal static class SimHistoryCounterOps
         }
 
         return flags;
+    }
+
+    public static CardModel? ReadHistoryCourseSourceCard(CombatState combat, Player player)
+    {
+        if (combat.RoundNumber <= 1)
+            return null;
+
+        int previousRound = combat.RoundNumber - 1;
+        CardModel? result = null;
+        foreach (CardPlayFinishedEntry finished in CombatManager.Instance.History.CardPlaysFinished)
+        {
+            CardModel card = finished.CardPlay.Card;
+            if (!ReferenceEquals(card.Owner, player))
+                continue;
+            if (finished.RoundNumber != previousRound)
+                continue;
+            if (card.IsDupe)
+                continue;
+
+            CardType type = card.Type;
+            if (type != CardType.Attack && type != CardType.Skill)
+                continue;
+
+            result = card;
+        }
+
+        return result;
     }
 
     private static ushort ClampInc(ushort value)

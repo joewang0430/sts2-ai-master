@@ -30,6 +30,9 @@ internal sealed class CombatNodeBlob
     public Span<ushort> CardEnergyModifierStart => CastSlice<ushort>(CombatSchemaV1.Cards.CardEnergyModifierStartOffset, CombatSchemaV1.Cards.EnergyModifierStartBytes);
     public Span<ushort> CardEnergyModifierCount => CastSlice<ushort>(CombatSchemaV1.Cards.CardEnergyModifierCountOffset, CombatSchemaV1.Cards.EnergyModifierCountBytes);
     public Span<SimLocalCostModifier> CardEnergyModifiers => CastSlice<SimLocalCostModifier>(CombatSchemaV1.Cards.CardEnergyModifiersOffset, CombatSchemaV1.Cards.EnergyModifierBytes);
+    public Span<ushort> CardTemporaryStarCostStart => CastSlice<ushort>(CombatSchemaV1.Cards.CardTemporaryStarCostStartOffset, CombatSchemaV1.Cards.TemporaryStarCostStartBytes);
+    public Span<ushort> CardTemporaryStarCostCount => CastSlice<ushort>(CombatSchemaV1.Cards.CardTemporaryStarCostCountOffset, CombatSchemaV1.Cards.TemporaryStarCostCountBytes);
+    public Span<SimTemporaryStarCost> CardTemporaryStarCosts => CastSlice<SimTemporaryStarCost>(CombatSchemaV1.Cards.CardTemporaryStarCostsOffset, CombatSchemaV1.Cards.TemporaryStarCostBytes);
 
     public Span<ushort> EnemyHp => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyHpOffset, CombatSchemaV1.Enemies.EnemyHpBytes);
     public Span<ushort> EnemyMaxHp => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyMaxHpOffset, CombatSchemaV1.Enemies.EnemyMaxHpBytes);
@@ -52,6 +55,7 @@ internal sealed class CombatNodeBlob
     public ref ushort ExhaustCount => ref RefAt<ushort>(CombatSchemaV1.Cards.ExhaustCountOffset);
     public ref ushort CardInstanceCount => ref RefAt<ushort>(CombatSchemaV1.Cards.CardInstanceCountOffset);
     public ref ushort CardEnergyModifierUsed => ref RefAt<ushort>(CombatSchemaV1.Cards.CardEnergyModifierUsedOffset);
+    public ref ushort CardTemporaryStarCostUsed => ref RefAt<ushort>(CombatSchemaV1.Cards.CardTemporaryStarCostUsedOffset);
 
     public ref byte Round => ref RefAt<byte>(CombatSchemaV1.Player.RoundOffset);
     public ref byte CurrentSide => ref RefAt<byte>(CombatSchemaV1.Player.CurrentSideOffset);
@@ -68,6 +72,7 @@ internal sealed class CombatNodeBlob
     public ref SimPet Osty => ref RefAt<SimPet>(CombatSchemaV1.Runtime.OstyOffset);
     public ref SimPowerInternal OstyPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Runtime.OstyPowerInternalOffset);
     public ref SimHistoryCounters HistoryCounters => ref RefAt<SimHistoryCounters>(CombatSchemaV1.Runtime.HistoryCountersOffset);
+    public ref SimCard HistoryCourseCard => ref RefAt<SimCard>(CombatSchemaV1.Runtime.HistoryCourseCardOffset);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ref short EnemyPower(int idx, int type)

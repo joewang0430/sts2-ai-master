@@ -44,6 +44,9 @@ internal static class CombatBlobVerifier
     private static readonly FieldInfo s_cardEnergyLocalModifiersField =
         typeof(CardEnergyCost).GetField("_localModifiers", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("CombatBlobVerifier: CardEnergyCost._localModifiers field not found.");
+    private static readonly FieldInfo s_cardTemporaryStarCostsField =
+        typeof(CardModel).GetField("_temporaryStarCosts", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("CombatBlobVerifier: CardModel._temporaryStarCosts field not found.");
 
     private static Dictionary<ushort, string>? s_cardNameById;
 
@@ -133,9 +136,10 @@ internal static class CombatBlobVerifier
                 int simCapturedX = !simX ? 0 : SimCardEnergyOps.GetCapturedXValue(s_blob, sc);
                 bool idOk = simN == livN && simU == livU;
                 bool energyOk = BlobCardEnergyMatchesLive(s_blob, sc, liveCard, out string? energyReason);
+                bool starOk = BlobCardStarCostMatchesLive(s_blob, sc, liveCard, out string? starReason);
                 bool historyOk = BlobCardHistoryFlagsMatchLive(state, sc, liveCard, out string? historyReason);
 
-                bool ok = idOk && energyOk && historyOk;
+                bool ok = idOk && energyOk && starOk && historyOk;
                 if (!ok) simAllOk = false;
                 if (ok)
                 {
@@ -148,6 +152,7 @@ internal static class CombatBlobVerifier
                     AddStandalone(sim,
                         $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
                         (energyOk ? string.Empty : $" energy={energyReason}") +
+                        (starOk ? string.Empty : $" star={starReason}") +
                         (historyOk ? string.Empty : $" hist={historyReason}"));
                 }
             }
@@ -155,6 +160,7 @@ internal static class CombatBlobVerifier
             DiffPile(sim, state, "Draw", s_blob.DrawCards.Slice(0, simDrawCount), pcs.DrawPile.Cards, ref simAllOk);
             DiffPile(sim, state, "Disc", s_blob.DiscCards.Slice(0, simDiscCount), pcs.DiscardPile.Cards, ref simAllOk);
             DiffPile(sim, state, "Exh", s_blob.ExhaustCards.Slice(0, simExhaustCount), pcs.ExhaustPile.Cards, ref simAllOk);
+            DiffHistoryCourseCard(sim, state, me, ref simAllOk);
         }
 
         DiffPowers(sim, "P.Pwr", pc.Powers, SimPowerOps.GetPlayerRow(s_blob), ref simAllOk);
@@ -279,13 +285,15 @@ internal static class CombatBlobVerifier
             bool livU = live[i].IsUpgraded;
             bool idOk = simN == livN && simU == livU;
             bool energyOk = BlobCardEnergyMatchesLive(s_blob, sc, live[i], out string? energyReason);
+            bool starOk = BlobCardStarCostMatchesLive(s_blob, sc, live[i], out string? starReason);
             bool historyOk = BlobCardHistoryFlagsMatchLive(state, sc, live[i], out string? historyReason);
-            if (!idOk || !energyOk || !historyOk)
+            if (!idOk || !energyOk || !starOk || !historyOk)
             {
                 if (diffs < 3)
                     firstMismatches.AppendLine(
                         $"  ✗ {tag}[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
                         (energyOk ? string.Empty : $" energy={energyReason}") +
+                        (starOk ? string.Empty : $" star={starReason}") +
                         (historyOk ? string.Empty : $" hist={historyReason}"));
                 diffs++;
             }
@@ -314,9 +322,29 @@ internal static class CombatBlobVerifier
             $"count={s_blob.CardInstanceCount} cap={CombatSimLayout.CardInstanceCap}", ref allOk);
         CheckBlobCondition(section, "ModUsed", s_blob.CardEnergyModifierUsed <= CombatSchemaV1.Cards.CardEnergyModifierCap,
             $"used={s_blob.CardEnergyModifierUsed} cap={CombatSchemaV1.Cards.CardEnergyModifierCap}", ref allOk);
+        DiffBlobHistoryCourseCard(section, ref allOk);
         DiffBlobMoveTableHandles(section, ref allOk);
         DiffBlobCardEnergySlices(section, ref allOk);
         DiffBlobCleanupMutations(section, ref allOk);
+    }
+
+    private static void DiffBlobHistoryCourseCard(CombatBlobVerificationSection section, ref bool allOk)
+    {
+        SimCard card = s_blob.HistoryCourseCard;
+        if (card.InstanceId == 0)
+        {
+            AddData(section, "✓ B.HistCourse=None");
+            return;
+        }
+
+        if (BlobCardEnergyInstanceCheck(s_blob, card, out string? reason))
+        {
+            AddData(section, $"✓ B.HistCourse#{card.InstanceId}");
+            return;
+        }
+
+        allOk = false;
+        AddStandalone(section, $"✗ B.HistCourse#{card.InstanceId}: {reason}");
     }
 
     private static void DiffBlobCleanupMutations(CombatBlobVerificationSection section, ref bool allOk)
@@ -449,6 +477,10 @@ internal static class CombatBlobVerifier
         DiffValue(section, "Hist.Star+", blob.PositiveStarsGainedThisTurn, live.PositiveStarsGainedThisTurn, ref allOk);
         DiffValue(section, "Hist.Bound", blob.BoundAfflictionsThisTurn, live.BoundAfflictionsThisTurn, ref allOk);
         DiffValue(section, "Hist.Doom", blob.DoomAppliedByPlayerThisTurn, live.DoomAppliedByPlayerThisTurn, ref allOk);
+        DiffValue(section, "Hist.AllFin", blob.CardsFinishedAllCombat, live.CardsFinishedAllCombat, ref allOk);
+        DiffValue(section, "Hist.PrevFin", blob.CardsFinishedPreviousRound, live.CardsFinishedPreviousRound, ref allOk);
+        DiffValue(section, "Hist.AllEth", blob.EtherealCardsFinishedAllCombat, live.EtherealCardsFinishedAllCombat, ref allOk);
+        DiffValue(section, "Hist.AllDraw", blob.CardsDrawnAllCombat, live.CardsDrawnAllCombat, ref allOk);
         DiffValue(section, "Hist.Flags", blob.Flags, live.Flags, ref allOk);
     }
 
@@ -780,6 +812,82 @@ internal static class CombatBlobVerifier
         return true;
     }
 
+    private static bool BlobCardStarCostInstanceCheck(CombatNodeBlob blobState, in SimCard blobCard, out string? reason)
+    {
+        ushort instanceId = blobCard.InstanceId;
+        if (instanceId == 0 || instanceId > blobState.CardInstanceCount)
+        {
+            reason = $"iid={instanceId} instN={blobState.CardInstanceCount}";
+            return false;
+        }
+
+        ushort blobStart = blobState.CardTemporaryStarCostStart[instanceId];
+        ushort blobCount = blobState.CardTemporaryStarCostCount[instanceId];
+        if (blobStart + blobCount > blobState.CardTemporaryStarCostUsed)
+        {
+            reason = $"tStart={blobStart} tCount={blobCount} tUsed={blobState.CardTemporaryStarCostUsed}";
+            return false;
+        }
+
+        _ = SimCardStarCostOps.GetCurrent(blobState, blobCard);
+        _ = SimCardStarCostOps.GetThisCombat(blobState, blobCard);
+        reason = null;
+        return true;
+    }
+
+    private static bool BlobCardStarCostMatchesLive(CombatNodeBlob blobState, in SimCard blobCard, CardModel liveCard, out string? reason)
+    {
+        if (!BlobCardStarCostInstanceCheck(blobState, blobCard, out reason))
+            return false;
+
+        List<TemporaryCardCost>? liveCosts =
+            (List<TemporaryCardCost>?)s_cardTemporaryStarCostsField.GetValue(liveCard);
+        if (liveCosts == null)
+        {
+            reason = "live star costs=null";
+            return false;
+        }
+
+        ushort instanceId = blobCard.InstanceId;
+        ushort blobStart = blobState.CardTemporaryStarCostStart[instanceId];
+        ushort blobCount = blobState.CardTemporaryStarCostCount[instanceId];
+        if (blobCount != liveCosts.Count)
+        {
+            reason = $"starN blob={blobCount} live={liveCosts.Count}";
+            return false;
+        }
+
+        for (int i = 0; i < liveCosts.Count; i++)
+        {
+            SimTemporaryStarCost liveCost = SimTemporaryStarCost.From(liveCosts[i]);
+            ref SimTemporaryStarCost blobCost = ref blobState.CardTemporaryStarCosts[blobStart + i];
+            if (blobCost.Cost == liveCost.Cost && blobCost.Flags == liveCost.Flags)
+                continue;
+
+            reason = $"star[{i}] blob={DescribeTemporaryStarCost(in blobCost)} live={DescribeTemporaryStarCost(in liveCost)}";
+            return false;
+        }
+
+        int blobCurrent = SimCardStarCostOps.GetCurrent(blobState, blobCard);
+        int liveCurrent = liveCard.CurrentStarCost;
+        if (blobCurrent != liveCurrent)
+        {
+            reason = $"current blob={blobCurrent} live={liveCurrent}";
+            return false;
+        }
+
+        int blobCombat = SimCardStarCostOps.GetThisCombat(blobState, blobCard);
+        int liveCombat = liveCard.GetStarCostThisCombat();
+        if (blobCombat != liveCombat)
+        {
+            reason = $"combat blob={blobCombat} live={liveCombat}";
+            return false;
+        }
+
+        reason = null;
+        return true;
+    }
+
     private static bool BlobCardHistoryFlagsMatchLive(CombatState state, in SimCard blobCard, CardModel liveCard, out string? reason)
     {
         const ushort mask = SimCard.FlagIsDupe | SimCard.FlagPlayedThisTurn | SimCard.FlagPlayedPreviousRound;
@@ -796,8 +904,58 @@ internal static class CombatBlobVerifier
         return false;
     }
 
+    private static void DiffHistoryCourseCard(CombatBlobVerificationSection section, CombatState state, Player me, ref bool allOk)
+    {
+        CardModel? liveCard = SimHistoryCounterOps.ReadHistoryCourseSourceCard(state, me);
+        SimCard blobCard = s_blob.HistoryCourseCard;
+        if (liveCard == null)
+        {
+            if (blobCard.InstanceId == 0)
+            {
+                AddData(section, "✓ HistCourse=None");
+                return;
+            }
+
+            allOk = false;
+            AddStandalone(section, $"✗ HistCourse: blob={ReverseCardName(blobCard.BaseCardId)}#{blobCard.InstanceId} live=<none>");
+            return;
+        }
+
+        if (blobCard.InstanceId == 0)
+        {
+            allOk = false;
+            AddStandalone(section, $"✗ HistCourse: blob=<none> live={liveCard.GetType().Name}");
+            return;
+        }
+
+        bool simU = blobCard.IsUpgraded;
+        bool livU = liveCard.IsUpgraded;
+        string simN = ReverseCardName(blobCard.BaseCardId);
+        string livN = liveCard.GetType().Name;
+        bool idOk = simN == livN && simU == livU;
+        bool energyOk = BlobCardEnergyMatchesLive(s_blob, blobCard, liveCard, out string? energyReason);
+        bool starOk = BlobCardStarCostMatchesLive(s_blob, blobCard, liveCard, out string? starReason);
+        bool historyOk = BlobCardHistoryFlagsMatchLive(state, blobCard, liveCard, out string? historyReason);
+
+        if (idOk && energyOk && starOk && historyOk)
+        {
+            AddData(section, $"✓ HistCourse={simN}{(simU ? "+" : "")}");
+            return;
+        }
+
+        allOk = false;
+        AddStandalone(section,
+            $"✗ HistCourse: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
+            (energyOk ? string.Empty : $" energy={energyReason}") +
+            (starOk ? string.Empty : $" star={starReason}") +
+            (historyOk ? string.Empty : $" hist={historyReason}"));
+    }
+
     private static string DescribeModifier(in SimLocalCostModifier modifier)
         => $"amt={modifier.Amount} type={modifier.Type} exp={modifier.Expiration} reduce={modifier.IsReduceOnly}";
+
+    private static string DescribeTemporaryStarCost(in SimTemporaryStarCost cost)
+        => $"cost={cost.Cost} turn={cost.ClearsWhenTurnEnds} played={cost.ClearsWhenCardIsPlayed}";
 
     private static bool IsValidLocalCostModifier(in SimLocalCostModifier modifier)
     {
