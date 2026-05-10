@@ -28,6 +28,8 @@ internal static class CombatNodeBlobSnapshot
         typeof(CardEnergyCost).GetField("_localModifiers", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("CombatNodeBlobSnapshot: CardEnergyCost._localModifiers field not found.");
 
+    private static readonly Dictionary<CardModel, ushort> s_cardPlayHistoryFlags = new(ReferenceEqualityComparer.Instance);
+
     public static void WriteV1FromCombatState(CombatState combat, CombatNodeBlob dst, int playerIdx = 0, CoopMode coop = CoopMode.SoloRoot)
     {
         SimCaps.EnsureVerified();
@@ -58,12 +60,13 @@ internal static class CombatNodeBlobSnapshot
         SimHistoryCounters historyCounters = default;
         SimHistoryCounterOps.CaptureLive(combat, player, ref historyCounters);
         dst.HistoryCounters = historyCounters;
+        SimHistoryCounterOps.CaptureCardPlayFlags(combat, player, s_cardPlayHistoryFlags);
 
         ushort nextCardInstanceId = 1;
-        dst.HandCount = SnapshotPile(pcs.Hand, dst.HandCards, dst, ref nextCardInstanceId);
-        dst.DrawCount = SnapshotPile(pcs.DrawPile, dst.DrawCards, dst, ref nextCardInstanceId);
-        dst.DiscCount = SnapshotPile(pcs.DiscardPile, dst.DiscCards, dst, ref nextCardInstanceId);
-        dst.ExhaustCount = SnapshotPile(pcs.ExhaustPile, dst.ExhaustCards, dst, ref nextCardInstanceId);
+        dst.HandCount = SnapshotPile(pcs.Hand, dst.HandCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
+        dst.DrawCount = SnapshotPile(pcs.DrawPile, dst.DrawCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
+        dst.DiscCount = SnapshotPile(pcs.DiscardPile, dst.DiscCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
+        dst.ExhaustCount = SnapshotPile(pcs.ExhaustPile, dst.ExhaustCards, dst, s_cardPlayHistoryFlags, ref nextCardInstanceId);
         dst.CardInstanceCount = (ushort)(nextCardInstanceId - 1);
 
         var enemies = combat.Enemies;
@@ -141,7 +144,12 @@ internal static class CombatNodeBlobSnapshot
         }
     }
 
-    private static ushort SnapshotPile(CardPile pile, Span<SimCard> dst, CombatNodeBlob blob, ref ushort nextCardInstanceId)
+    private static ushort SnapshotPile(
+        CardPile pile,
+        Span<SimCard> dst,
+        CombatNodeBlob blob,
+        Dictionary<CardModel, ushort> cardHistoryFlags,
+        ref ushort nextCardInstanceId)
     {
         var cards = pile.Cards;
         int count = cards.Count;
@@ -168,6 +176,9 @@ internal static class CombatNodeBlobSnapshot
             if (card.Keywords.Contains(CardKeyword.Eternal))  flags |= SimCard.FlagHasEternalKeyword;
             if (card.Keywords.Contains(CardKeyword.Ethereal)) flags |= SimCard.FlagHasEtherealKeyword;
             if (card.EnergyCost.CostsX)                       flags |= SimCard.FlagHasEnergyCostX;
+            if (card.IsDupe)                                  flags |= SimCard.FlagIsDupe;
+            if (cardHistoryFlags.TryGetValue(card, out ushort historyFlags))
+                flags |= historyFlags;
 
             byte encId = 0;
             byte encAmt = 0;

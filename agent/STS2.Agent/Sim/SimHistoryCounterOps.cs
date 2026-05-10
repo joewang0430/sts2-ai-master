@@ -1,8 +1,11 @@
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Combat.History.Entries;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Afflictions;
 using MegaCrit.Sts2.Core.Models.Powers;
 
@@ -80,6 +83,53 @@ internal static class SimHistoryCounterOps
                     break;
             }
         }
+    }
+
+    public static void CaptureCardPlayFlags(CombatState combat, Player player, Dictionary<CardModel, ushort> dst)
+    {
+        dst.Clear();
+
+        int previousRound = combat.RoundNumber - 1;
+        foreach (CardPlayFinishedEntry finished in CombatManager.Instance.History.CardPlaysFinished)
+        {
+            CardModel card = finished.CardPlay.Card;
+            if (!ReferenceEquals(card.Owner, player))
+                continue;
+
+            ushort flags = 0;
+            if (finished.HappenedThisTurn(combat))
+                flags |= SimCard.FlagPlayedThisTurn;
+            if (finished.RoundNumber == previousRound)
+                flags |= SimCard.FlagPlayedPreviousRound;
+            if (flags == 0)
+                continue;
+
+            ref ushort slot = ref CollectionsMarshal.GetValueRefOrAddDefault(dst, card, out _);
+            slot |= flags;
+        }
+    }
+
+    public static ushort ReadLiveCardFlags(CombatState combat, CardModel card)
+    {
+        ushort flags = card.IsDupe ? SimCard.FlagIsDupe : (ushort)0;
+        int previousRound = combat.RoundNumber - 1;
+        ushort doneMask = (ushort)(SimCard.FlagPlayedThisTurn | SimCard.FlagPlayedPreviousRound);
+
+        foreach (CardPlayFinishedEntry finished in CombatManager.Instance.History.CardPlaysFinished)
+        {
+            if (!ReferenceEquals(finished.CardPlay.Card, card))
+                continue;
+
+            if (finished.HappenedThisTurn(combat))
+                flags |= SimCard.FlagPlayedThisTurn;
+            if (finished.RoundNumber == previousRound)
+                flags |= SimCard.FlagPlayedPreviousRound;
+
+            if ((flags & doneMask) == doneMask)
+                break;
+        }
+
+        return flags;
     }
 
     private static ushort ClampInc(ushort value)

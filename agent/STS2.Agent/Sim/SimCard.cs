@@ -24,7 +24,8 @@ namespace STS2.Agent.Sim;
 ///                                  // bit6=HasExhaustKeyword, bit7=HasRetainKeyword,
 ///                                  // bit8=HasInnateKeyword, bit9=HasEternalKeyword,
 ///                                  // bit10=HasEtherealKeyword, bit11=HasEnergyCostX,
-///                                  // bits12..15=reserved
+///                                  // bit12=IsDupe, bit13=PlayedThisTurn,
+///                                  // bit14=PlayedPreviousRound, bit15=reserved
 ///   9      1    EnchantmentId      // 0 = None; otherwise SimEnchantmentType.*
 ///  10      1    EnchantmentAmount  // byte; clamped non-negative stack count
 ///  11      1    AfflictionId       // 0 = None; otherwise SimAfflictionType.*
@@ -74,7 +75,9 @@ internal struct SimCard
     /// bit4 AfflictionAppliedExhaust, bit5 AfflictionAppliedEthereal,
     /// bit6 HasExhaustKeyword, bit7 HasRetainKeyword,
     /// bit8 HasInnateKeyword, bit9 HasEternalKeyword,
-    /// bit10 HasEtherealKeyword, bit11 HasEnergyCostX. See
+    /// bit10 HasEtherealKeyword, bit11 HasEnergyCostX,
+    /// bit12 IsDupe, bit13 PlayedThisTurn,
+    /// bit14 PlayedPreviousRound. See
     /// <see cref="FlagExhaustOnNextPlay"/> &amp; co.</summary>
     public ushort Flags;
 
@@ -104,6 +107,9 @@ internal struct SimCard
     public const ushort FlagHasEternalKeyword = 1 << 9;
     public const ushort FlagHasEtherealKeyword = 1 << 10;
     public const ushort FlagHasEnergyCostX = 1 << 11;
+    public const ushort FlagIsDupe = 1 << 12;
+    public const ushort FlagPlayedThisTurn = 1 << 13;
+    public const ushort FlagPlayedPreviousRound = 1 << 14;
 
     /// <summary>True iff bit 15 of <see cref="CardId"/> is set.</summary>
     public readonly bool IsUpgraded
@@ -180,5 +186,26 @@ internal struct SimCard
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => (Flags & FlagHasEnergyCostX) != 0;
+    }
+
+    /// <summary>True iff this card is a dupe created from another card.</summary>
+    public readonly bool IsDupe
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Flags & FlagIsDupe) != 0;
+    }
+
+    /// <summary>True iff this exact card finished playing during the current round.</summary>
+    public readonly bool WasPlayedThisTurn
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Flags & FlagPlayedThisTurn) != 0;
+    }
+
+    /// <summary>True iff this exact card finished playing during the previous round.</summary>
+    public readonly bool WasPlayedPreviousRound
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => (Flags & FlagPlayedPreviousRound) != 0;
     }
 }

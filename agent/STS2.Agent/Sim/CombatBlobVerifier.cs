@@ -133,8 +133,9 @@ internal static class CombatBlobVerifier
                 int simCapturedX = !simX ? 0 : SimCardEnergyOps.GetCapturedXValue(s_blob, sc);
                 bool idOk = simN == livN && simU == livU;
                 bool energyOk = BlobCardEnergyMatchesLive(s_blob, sc, liveCard, out string? energyReason);
+                bool historyOk = BlobCardHistoryFlagsMatchLive(state, sc, liveCard, out string? historyReason);
 
-                bool ok = idOk && energyOk;
+                bool ok = idOk && energyOk && historyOk;
                 if (!ok) simAllOk = false;
                 if (ok)
                 {
@@ -146,13 +147,14 @@ internal static class CombatBlobVerifier
                 {
                     AddStandalone(sim,
                         $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
-                        (energyOk ? string.Empty : $" energy={energyReason}"));
+                        (energyOk ? string.Empty : $" energy={energyReason}") +
+                        (historyOk ? string.Empty : $" hist={historyReason}"));
                 }
             }
 
-            DiffPile(sim, "Draw", s_blob.DrawCards.Slice(0, simDrawCount), pcs.DrawPile.Cards, ref simAllOk);
-            DiffPile(sim, "Disc", s_blob.DiscCards.Slice(0, simDiscCount), pcs.DiscardPile.Cards, ref simAllOk);
-            DiffPile(sim, "Exh", s_blob.ExhaustCards.Slice(0, simExhaustCount), pcs.ExhaustPile.Cards, ref simAllOk);
+            DiffPile(sim, state, "Draw", s_blob.DrawCards.Slice(0, simDrawCount), pcs.DrawPile.Cards, ref simAllOk);
+            DiffPile(sim, state, "Disc", s_blob.DiscCards.Slice(0, simDiscCount), pcs.DiscardPile.Cards, ref simAllOk);
+            DiffPile(sim, state, "Exh", s_blob.ExhaustCards.Slice(0, simExhaustCount), pcs.ExhaustPile.Cards, ref simAllOk);
         }
 
         DiffPowers(sim, "P.Pwr", pc.Powers, SimPowerOps.GetPlayerRow(s_blob), ref simAllOk);
@@ -258,7 +260,7 @@ internal static class CombatBlobVerifier
     }
 
     private static void DiffPile(
-        CombatBlobVerificationSection section, string tag,
+        CombatBlobVerificationSection section, CombatState state, string tag,
         ReadOnlySpan<SimCard> simSlice,
         IReadOnlyList<CardModel> live,
         ref bool allOk)
@@ -277,12 +279,14 @@ internal static class CombatBlobVerifier
             bool livU = live[i].IsUpgraded;
             bool idOk = simN == livN && simU == livU;
             bool energyOk = BlobCardEnergyMatchesLive(s_blob, sc, live[i], out string? energyReason);
-            if (!idOk || !energyOk)
+            bool historyOk = BlobCardHistoryFlagsMatchLive(state, sc, live[i], out string? historyReason);
+            if (!idOk || !energyOk || !historyOk)
             {
                 if (diffs < 3)
                     firstMismatches.AppendLine(
                         $"  ✗ {tag}[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
-                        (energyOk ? string.Empty : $" energy={energyReason}"));
+                        (energyOk ? string.Empty : $" energy={energyReason}") +
+                        (historyOk ? string.Empty : $" hist={historyReason}"));
                 diffs++;
             }
         }
@@ -774,6 +778,22 @@ internal static class CombatBlobVerifier
 
         reason = null;
         return true;
+    }
+
+    private static bool BlobCardHistoryFlagsMatchLive(CombatState state, in SimCard blobCard, CardModel liveCard, out string? reason)
+    {
+        const ushort mask = SimCard.FlagIsDupe | SimCard.FlagPlayedThisTurn | SimCard.FlagPlayedPreviousRound;
+
+        ushort blobFlags = (ushort)(blobCard.Flags & mask);
+        ushort liveFlags = SimHistoryCounterOps.ReadLiveCardFlags(state, liveCard);
+        if (blobFlags == liveFlags)
+        {
+            reason = null;
+            return true;
+        }
+
+        reason = $"flags=0x{blobFlags:X4}/0x{liveFlags:X4}";
+        return false;
     }
 
     private static string DescribeModifier(in SimLocalCostModifier modifier)
