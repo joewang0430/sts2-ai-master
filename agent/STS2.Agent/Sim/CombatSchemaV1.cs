@@ -20,6 +20,7 @@ internal static class CombatSchemaV1
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
     public static readonly int SimEnemyMoveSMSize = Unsafe.SizeOf<SimEnemyMoveSM>();
     public static readonly int SimPetSize = Unsafe.SizeOf<SimPet>();
+    public static readonly int SimHistoryCountersSize = Unsafe.SizeOf<SimHistoryCounters>();
     public static readonly int RandomStateSize = Unsafe.SizeOf<RandomState>();
     public static readonly int RandomStateBufferSize = Unsafe.SizeOf<RandomStateBuffer>();
     public static readonly int TotalBytes = Runtime.TotalBytes;
@@ -59,6 +60,13 @@ internal static class CombatSchemaV1
             throw new InvalidOperationException(
                 $"CombatSchemaV1: expected SimPet size 8, got {SimPetSize}. " +
                 "Pet layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (SimHistoryCountersSize != 32)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimHistoryCounters size 32, got {SimHistoryCountersSize}. " +
+                "History-counter layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
         if (RandomStateBufferSize != RandomStateSize * (int)SimRngSlot.Count)
@@ -305,6 +313,7 @@ internal static class CombatSchemaV1
         public static readonly int OstyBytes = CombatSchemaV1.SimPetSize;
         public static readonly int OstyPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
         public static readonly int OstyPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
+        public static readonly int HistoryCountersBytes = CombatSchemaV1.SimHistoryCountersSize;
         public static readonly int RngBytes = CombatSchemaV1.RandomStateBufferSize;
 
         public static readonly int OrbSlotsOffset;
@@ -313,6 +322,7 @@ internal static class CombatSchemaV1
         public static readonly int OstyOffset;
         public static readonly int OstyPowersOffset;
         public static readonly int OstyPowerInternalOffset;
+        public static readonly int HistoryCountersOffset;
         public static readonly int RngOffset;
         public static readonly int TotalBytes;
 
@@ -343,6 +353,11 @@ internal static class CombatSchemaV1
 
             OstyPowerInternalOffset = offset;
             offset += OstyPowerInternalBytes;
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            HistoryCountersOffset = offset;
+            offset += HistoryCountersBytes;
 
             offset = AlignUp(offset, sizeof(int));
 

@@ -93,7 +93,7 @@ internal static class CombatBlobVerifier
         }
 
         Cmp("Round", s_blob.Round, state.RoundNumber);
-    Cmp("Side", s_blob.CurrentSide, (byte)state.CurrentSide);
+        Cmp("Side", s_blob.CurrentSide, (byte)state.CurrentSide);
         Cmp("HP", s_blob.PlayerHp, pc.CurrentHp);
         Cmp("MaxHP", s_blob.PlayerMaxHp, pc.MaxHp);
         Cmp("Block", s_blob.PlayerBlock, pc.Block);
@@ -111,6 +111,7 @@ internal static class CombatBlobVerifier
             Cmp("DrawN", simDrawCount, pcs.DrawPile.Cards.Count);
             Cmp("DiscN", simDiscCount, pcs.DiscardPile.Cards.Count);
             Cmp("ExhN", simExhaustCount, pcs.ExhaustPile.Cards.Count);
+            DiffHistoryCounters(sim, state, me, ref simAllOk);
             DiffOrbs(sim, pcs, ref simAllOk);
             DiffOsty(sim, pcs, ref simAllOk);
 
@@ -421,6 +422,30 @@ internal static class CombatBlobVerifier
         DiffValue(section, "Osty", s_blob.Osty, liveOsty, ref allOk);
         DiffPowers(section, "Osty.Pwr", livePowers, s_blob.OstyPowers, ref allOk);
         DiffValue(section, "Osty.PwrI", s_blob.OstyPowerInternal, ReadLivePowerInternal(livePowers), ref allOk);
+    }
+
+    private static void DiffHistoryCounters(CombatBlobVerificationSection section, CombatState state, Player me, ref bool allOk)
+    {
+        SimHistoryCounters live = default;
+        SimHistoryCounterOps.CaptureLive(state, me, ref live);
+        ref SimHistoryCounters blob = ref s_blob.HistoryCounters;
+
+        DiffValue(section, "Hist.StartN", blob.CardsStartedThisTurn, live.CardsStartedThisTurn, ref allOk);
+        DiffValue(section, "Hist.Start1st", blob.FirstSeriesCardsStartedThisTurn, live.FirstSeriesCardsStartedThisTurn, ref allOk);
+        DiffValue(section, "Hist.StartAtk", blob.AttacksStartedThisTurn, live.AttacksStartedThisTurn, ref allOk);
+        DiffValue(section, "Hist.StartAtk0", blob.ZeroCostAttacksStartedThisTurn, live.ZeroCostAttacksStartedThisTurn, ref allOk);
+        DiffValue(section, "Hist.FinN", blob.CardsFinishedThisTurn, live.CardsFinishedThisTurn, ref allOk);
+        DiffValue(section, "Hist.FinAtk", blob.AttacksFinishedThisTurn, live.AttacksFinishedThisTurn, ref allOk);
+        DiffValue(section, "Hist.FinSkl", blob.SkillsFinishedThisTurn, live.SkillsFinishedThisTurn, ref allOk);
+        DiffValue(section, "Hist.E", blob.EnergySpentThisTurn, live.EnergySpentThisTurn, ref allOk);
+        DiffValue(section, "Hist.DrawNH", blob.NonHandDrawsThisTurn, live.NonHandDrawsThisTurn, ref allOk);
+        DiffValue(section, "Hist.DrawSt", blob.StatusDrawsThisTurn, live.StatusDrawsThisTurn, ref allOk);
+        DiffValue(section, "Hist.Exh", blob.CardsExhaustedThisTurn, live.CardsExhaustedThisTurn, ref allOk);
+        DiffValue(section, "Hist.Disc", blob.CardsDiscardedThisTurn, live.CardsDiscardedThisTurn, ref allOk);
+        DiffValue(section, "Hist.Star+", blob.PositiveStarsGainedThisTurn, live.PositiveStarsGainedThisTurn, ref allOk);
+        DiffValue(section, "Hist.Bound", blob.BoundAfflictionsThisTurn, live.BoundAfflictionsThisTurn, ref allOk);
+        DiffValue(section, "Hist.Doom", blob.DoomAppliedByPlayerThisTurn, live.DoomAppliedByPlayerThisTurn, ref allOk);
+        DiffValue(section, "Hist.Flags", blob.Flags, live.Flags, ref allOk);
     }
 
     private static bool SimLocalCostModifierEquals(in SimLocalCostModifier left, in SimLocalCostModifier right)

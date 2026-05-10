@@ -67,6 +67,7 @@ internal sealed class CombatNodeBlob
     public ref byte OrbCapacity => ref RefAt<byte>(CombatSchemaV1.Runtime.OrbCapacityOffset);
     public ref SimPet Osty => ref RefAt<SimPet>(CombatSchemaV1.Runtime.OstyOffset);
     public ref SimPowerInternal OstyPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Runtime.OstyPowerInternalOffset);
+    public ref SimHistoryCounters HistoryCounters => ref RefAt<SimHistoryCounters>(CombatSchemaV1.Runtime.HistoryCountersOffset);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ref short EnemyPower(int idx, int type)

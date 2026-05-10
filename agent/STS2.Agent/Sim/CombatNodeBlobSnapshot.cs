@@ -41,7 +41,7 @@ internal static class CombatNodeBlobSnapshot
             ?? throw new InvalidOperationException("CombatNodeBlobSnapshot: player.PlayerCombatState is null (combat not started?).");
 
         dst.Round = (byte)combat.RoundNumber;
-    dst.CurrentSide = (byte)combat.CurrentSide;
+        dst.CurrentSide = (byte)combat.CurrentSide;
         dst.PlayerHp = ClampU16(playerCreature.CurrentHp);
         dst.PlayerMaxHp = ClampU16(playerCreature.MaxHp);
         dst.PlayerBlock = ClampU16(playerCreature.Block);
@@ -55,6 +55,9 @@ internal static class CombatNodeBlobSnapshot
         dst.PlayerPowerInternal = playerPowerInternal;
         SnapshotOrbs(pcs.OrbQueue, dst);
         SnapshotOsty(pcs, dst);
+        SimHistoryCounters historyCounters = default;
+        SimHistoryCounterOps.CaptureLive(combat, player, ref historyCounters);
+        dst.HistoryCounters = historyCounters;
 
         ushort nextCardInstanceId = 1;
         dst.HandCount = SnapshotPile(pcs.Hand, dst.HandCards, dst, ref nextCardInstanceId);
