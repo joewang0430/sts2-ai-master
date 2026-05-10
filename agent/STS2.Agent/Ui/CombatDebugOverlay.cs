@@ -378,11 +378,11 @@ internal static class CombatDebugOverlay
             bool hasBlobPanel = _labelBlob is not null && GodotObject.IsInstanceValid(_labelBlob);
             if (hasSimPanel || hasBlobPanel)
             {
-                CombatBlobVerifier.BuildSnapshotDiffTexts(_state, out string simDiffText, out string blobDiffText);
+                CombatBlobVerificationReport report = CombatBlobVerifier.BuildSnapshotReport(_state);
                 if (hasSimPanel)
-                    _labelSim!.Text = simDiffText;
+                    _labelSim!.Text = CombatBlobVerifier.FormatSection(report.Sim);
                 if (hasBlobPanel)
-                    _labelBlob!.Text = blobDiffText;
+                    _labelBlob!.Text = CombatBlobVerifier.FormatSection(report.Blob);
             }
 
             // Detect divergence between our tracked potions and the live list:

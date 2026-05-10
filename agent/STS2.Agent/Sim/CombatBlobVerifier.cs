@@ -17,6 +17,21 @@ using MegaCrit.Sts2.Core.Random;
 
 namespace STS2.Agent.Sim;
 
+internal readonly record struct CombatBlobVerificationLine(string Text, bool Pairable);
+
+internal sealed class CombatBlobVerificationSection(string title)
+{
+    public string Title { get; } = title;
+    public bool AllOk { get; set; }
+    public List<CombatBlobVerificationLine> Lines { get; } = new();
+}
+
+internal sealed class CombatBlobVerificationReport
+{
+    public CombatBlobVerificationSection Sim { get; } = new("── BLOB VS LIVE ─────────");
+    public CombatBlobVerificationSection Blob { get; } = new("── BLOB CHECKS ─────────");
+}
+
 /// <summary>
 /// Builds human-readable blob verification output for a live combat state.
 /// This is kept separate from the UI layer so the same verification logic can
@@ -32,14 +47,11 @@ internal static class CombatBlobVerifier
 
     private static Dictionary<ushort, string>? s_cardNameById;
 
-    public static void BuildSnapshotDiffTexts(CombatState state, out string simText, out string blobText)
+    public static CombatBlobVerificationReport BuildSnapshotReport(CombatState state)
     {
-        var simSb = new StringBuilder(512);
-        var blobSb = new StringBuilder(256);
-        simSb.AppendLine();
-        simSb.AppendLine("── BLOB VS LIVE ─────────");
-        blobSb.AppendLine();
-        blobSb.AppendLine("── BLOB CHECKS ─────────");
+        CombatBlobVerificationReport report = new();
+        CombatBlobVerificationSection sim = report.Sim;
+        CombatBlobVerificationSection blob = report.Blob;
 
         bool simAllOk = true;
         bool blobAllOk = true;
@@ -52,23 +64,21 @@ internal static class CombatBlobVerifier
         {
             simAllOk = false;
             blobAllOk = false;
-            simSb.AppendLine($"✗ Blob.LiveWrite threw: {ex.Message}");
-            blobSb.AppendLine($"✗ Blob.LiveWrite threw: {ex.Message}");
-            simText = simSb.ToString();
-            blobText = blobSb.ToString();
-            return;
+            AddStandalone(sim, $"✗ Blob.LiveWrite threw: {ex.Message}");
+            AddStandalone(blob, $"✗ Blob.LiveWrite threw: {ex.Message}");
+            sim.AllOk = simAllOk;
+            blob.AllOk = blobAllOk;
+            return report;
         }
 
         Player? me = LocalContext.GetMe(state);
         if (me is null)
         {
-            simSb.AppendLine("(no local player)");
-            DiffBlobInternalChecks(blobSb, ref blobAllOk);
-            if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("BLOB VS LIVE", StringComparison.Ordinal)) + 1, "✓ ALL OK\n");
-            if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CHECKS", StringComparison.Ordinal)) + 1, "✓ ALL OK\n");
-            simText = PackTwoPerLine(simSb.ToString());
-            blobText = PackTwoPerLine(blobSb.ToString());
-            return;
+            AddStandalone(sim, "(no local player)");
+            DiffBlobInternalChecks(blob, ref blobAllOk);
+            sim.AllOk = simAllOk;
+            blob.AllOk = blobAllOk;
+            return report;
         }
 
         Creature pc = me.Creature;
@@ -78,9 +88,8 @@ internal static class CombatBlobVerifier
         {
             bool ok = blobVal.ToString() == liveVal.ToString();
             if (!ok) simAllOk = false;
-            simSb.AppendLine(ok
-                ? $"✓ {name}={blobVal}"
-                : $"✗ {name}: blob={blobVal} live={liveVal}");
+            if (ok) AddData(sim, $"✓ {name}={blobVal}");
+            else AddStandalone(sim, $"✗ {name}: blob={blobVal} live={liveVal}");
         }
 
         Cmp("Round", s_blob.Round, state.RoundNumber);
@@ -101,8 +110,8 @@ internal static class CombatBlobVerifier
             Cmp("DrawN", simDrawCount, pcs.DrawPile.Cards.Count);
             Cmp("DiscN", simDiscCount, pcs.DiscardPile.Cards.Count);
             Cmp("ExhN", simExhaustCount, pcs.ExhaustPile.Cards.Count);
-            DiffOrbs(simSb, pcs, ref simAllOk);
-            DiffOsty(simSb, pcs, ref simAllOk);
+            DiffOrbs(sim, pcs, ref simAllOk);
+            DiffOsty(sim, pcs, ref simAllOk);
 
             Span<SimCard> blobHand = s_blob.HandCards;
             int hn = Math.Min(simHandCount, pcs.Hand.Cards.Count);
@@ -125,20 +134,27 @@ internal static class CombatBlobVerifier
 
                 bool ok = idOk && energyOk;
                 if (!ok) simAllOk = false;
-                simSb.AppendLine(ok
-                    ? $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}" +
-                        $" costL={simLocalCost}{(simHasLocal ? "*" : "")}{(simX ? $" X={simCapturedX}" : string.Empty)}"
-                    : $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
+                if (ok)
+                {
+                    AddData(sim,
+                        $"✓ Hand[{i}]={simN}{(simU ? "+" : "")}" +
+                        $" costL={simLocalCost}{(simHasLocal ? "*" : "")}{(simX ? $" X={simCapturedX}" : string.Empty)}");
+                }
+                else
+                {
+                    AddStandalone(sim,
+                        $"✗ Hand[{i}]: sim={simN}{(simU ? "+" : "")} live={livN}{(livU ? "+" : "")}" +
                         (energyOk ? string.Empty : $" energy={energyReason}"));
+                }
             }
 
-            DiffPile(simSb, "Draw", s_blob.DrawCards.Slice(0, simDrawCount), pcs.DrawPile.Cards, ref simAllOk);
-            DiffPile(simSb, "Disc", s_blob.DiscCards.Slice(0, simDiscCount), pcs.DiscardPile.Cards, ref simAllOk);
-            DiffPile(simSb, "Exh", s_blob.ExhaustCards.Slice(0, simExhaustCount), pcs.ExhaustPile.Cards, ref simAllOk);
+            DiffPile(sim, "Draw", s_blob.DrawCards.Slice(0, simDrawCount), pcs.DrawPile.Cards, ref simAllOk);
+            DiffPile(sim, "Disc", s_blob.DiscCards.Slice(0, simDiscCount), pcs.DiscardPile.Cards, ref simAllOk);
+            DiffPile(sim, "Exh", s_blob.ExhaustCards.Slice(0, simExhaustCount), pcs.ExhaustPile.Cards, ref simAllOk);
         }
 
-        DiffPowers(simSb, "P.Pwr", pc.Powers, SimPowerOps.GetPlayerRow(s_blob), ref simAllOk);
-        DiffValue(simSb, "P.PwrI", s_blob.PlayerPowerInternal, ReadLivePowerInternal(pc.Powers), ref simAllOk);
+        DiffPowers(sim, "P.Pwr", pc.Powers, SimPowerOps.GetPlayerRow(s_blob), ref simAllOk);
+        DiffValue(sim, "P.PwrI", s_blob.PlayerPowerInternal, ReadLivePowerInternal(pc.Powers), ref simAllOk);
 
         int simEnemyCount = s_blob.EnemyCount;
         Cmp("EnemyN", simEnemyCount, state.Enemies.Count);
@@ -150,65 +166,65 @@ internal static class CombatBlobVerifier
             Cmp($"E{i}.MaxHP", s_blob.EnemyMaxHp[i], e.MaxHp);
             Cmp($"E{i}.Block", s_blob.EnemyBlock[i], e.Block);
 
-            DiffIntent(simSb, i, e, ref simAllOk);
+            DiffIntent(sim, i, e, ref simAllOk);
 
-            DiffPowers(simSb, $"E{i}.Pwr", e.Powers, SimPowerOps.GetEnemyRow(s_blob, i), ref simAllOk);
-            DiffValue(simSb, $"E{i}.PwrI", s_blob.EnemyPowerInternal[i], ReadLivePowerInternal(e.Powers), ref simAllOk);
+            DiffPowers(sim, $"E{i}.Pwr", e.Powers, SimPowerOps.GetEnemyRow(s_blob, i), ref simAllOk);
+            DiffValue(sim, $"E{i}.PwrI", s_blob.EnemyPowerInternal[i], ReadLivePowerInternal(e.Powers), ref simAllOk);
 
             CaptureLiveMoveSm(e, out SimEnemyMoveSM liveMoveSm, out ushort liveMoveTableHandle);
-            DiffValue(simSb, $"E{i}.Move", s_blob.EnemyMoveSM[i], liveMoveSm, ref simAllOk);
+            DiffValue(sim, $"E{i}.Move", s_blob.EnemyMoveSM[i], liveMoveSm, ref simAllOk);
             Cmp($"E{i}.Tbl", s_blob.EnemyMoveTableHandles[i], liveMoveTableHandle);
         }
 
-        DiffAllRng(simSb, state, ref simAllOk);
-        DiffBlobInternalChecks(blobSb, ref blobAllOk);
+        DiffAllRng(sim, state, ref simAllOk);
+        DiffBlobInternalChecks(blob, ref blobAllOk);
 
-        if (simAllOk) simSb.Insert(simSb.ToString().IndexOf('\n', simSb.ToString().IndexOf("BLOB VS LIVE", StringComparison.Ordinal)) + 1, "✓ ALL OK\n");
-        if (blobAllOk) blobSb.Insert(blobSb.ToString().IndexOf('\n', blobSb.ToString().IndexOf("BLOB CHECKS", StringComparison.Ordinal)) + 1, "✓ ALL OK\n");
-
-        simText = PackTwoPerLine(simSb.ToString());
-        blobText = PackTwoPerLine(blobSb.ToString());
+        sim.AllOk = simAllOk;
+        blob.AllOk = blobAllOk;
+        return report;
     }
 
-    private static string PackTwoPerLine(string raw)
+    public static void BuildSnapshotDiffTexts(CombatState state, out string simText, out string blobText)
+    {
+        CombatBlobVerificationReport report = BuildSnapshotReport(state);
+        simText = FormatSection(report.Sim);
+        blobText = FormatSection(report.Blob);
+    }
+
+    public static string FormatSection(CombatBlobVerificationSection section)
     {
         const int CellW = 22;
 
-        var lines = raw.Split('\n');
-        var sb = new StringBuilder(raw.Length);
+        var sb = new StringBuilder(256);
+        sb.AppendLine();
+        sb.AppendLine(section.Title);
+        if (section.AllOk)
+            sb.AppendLine("✓ ALL OK");
+
         string? pending = null;
 
-        bool IsStandalone(string s) =>
-            s.Length == 0
-            || s.StartsWith("  ", StringComparison.Ordinal)
-            || s.StartsWith("──", StringComparison.Ordinal)
-            || s.Contains("SIM DIFF", StringComparison.Ordinal)
-            || s.Contains("ALL OK", StringComparison.Ordinal)
-            || s.StartsWith("✗ ", StringComparison.Ordinal)
-            || s.StartsWith("(", StringComparison.Ordinal);
-
-        for (int i = 0; i < lines.Length; i++)
+        for (int i = 0; i < section.Lines.Count; i++)
         {
-            string l = lines[i].TrimEnd('\r');
+            CombatBlobVerificationLine line = section.Lines[i];
 
-            if (IsStandalone(l))
+            if (!line.Pairable)
             {
                 if (pending != null)
                 {
                     sb.AppendLine(pending);
                     pending = null;
                 }
-                sb.AppendLine(l);
+                sb.AppendLine(line.Text);
                 continue;
             }
 
-            if (pending == null) pending = l;
+            if (pending == null) pending = line.Text;
             else
             {
                 sb.Append(pending);
                 int pad = CellW - pending.Length;
                 if (pad > 0) sb.Append(' ', pad);
-                sb.Append(" │ ").AppendLine(l);
+                sb.Append(" │ ").AppendLine(line.Text);
                 pending = null;
             }
         }
@@ -217,8 +233,30 @@ internal static class CombatBlobVerifier
         return sb.ToString();
     }
 
+    private static void AddData(CombatBlobVerificationSection section, string text)
+        => section.Lines.Add(new CombatBlobVerificationLine(text, Pairable: true));
+
+    private static void AddStandalone(CombatBlobVerificationSection section, string text)
+        => section.Lines.Add(new CombatBlobVerificationLine(text, Pairable: false));
+
+    private static void AddBufferedStandaloneLines(CombatBlobVerificationSection section, StringBuilder lines)
+    {
+        if (lines.Length == 0)
+            return;
+
+        string[] split = lines.ToString().Split('\n');
+        for (int i = 0; i < split.Length; i++)
+        {
+            string line = split[i].TrimEnd('\r');
+            if (line.Length == 0)
+                continue;
+
+            AddStandalone(section, line);
+        }
+    }
+
     private static void DiffPile(
-        StringBuilder sb, string tag,
+        CombatBlobVerificationSection section, string tag,
         ReadOnlySpan<SimCard> simSlice,
         IReadOnlyList<CardModel> live,
         ref bool allOk)
@@ -248,42 +286,42 @@ internal static class CombatBlobVerifier
         }
         if (diffs == 0 && simCount == live.Count)
         {
-            sb.AppendLine($"✓ {tag}({n})");
+            AddData(section, $"✓ {tag}({n})");
         }
         else
         {
             allOk = false;
-            sb.AppendLine($"✗ {tag}: {diffs} mismatch(es), simN={simCount} liveN={live.Count}");
-            if (firstMismatches.Length > 0) sb.Append(firstMismatches);
+            AddStandalone(section, $"✗ {tag}: {diffs} mismatch(es), simN={simCount} liveN={live.Count}");
+            AddBufferedStandaloneLines(section, firstMismatches);
         }
     }
 
-    private static void DiffBlobInternalChecks(StringBuilder sb, ref bool allOk)
+    private static void DiffBlobInternalChecks(CombatBlobVerificationSection section, ref bool allOk)
     {
-        CheckBlobCondition(sb, "Bytes", s_blob.ByteLength == CombatSchemaV1.TotalBytes,
+        CheckBlobCondition(section, "Bytes", s_blob.ByteLength == CombatSchemaV1.TotalBytes,
             $"blob={s_blob.ByteLength} schema={CombatSchemaV1.TotalBytes}", ref allOk);
-        CheckBlobCondition(sb, "EnemyN", s_blob.EnemyCount <= CombatSimLayout.EnemyCap,
+        CheckBlobCondition(section, "EnemyN", s_blob.EnemyCount <= CombatSimLayout.EnemyCap,
             $"count={s_blob.EnemyCount} cap={CombatSimLayout.EnemyCap}", ref allOk);
-        CheckBlobCondition(sb, "OrbCap", s_blob.OrbCount <= s_blob.OrbCapacity && s_blob.OrbCapacity <= 10,
+        CheckBlobCondition(section, "OrbCap", s_blob.OrbCount <= s_blob.OrbCapacity && s_blob.OrbCapacity <= 10,
             $"count={s_blob.OrbCount} cap={s_blob.OrbCapacity}", ref allOk);
-        CheckBlobCondition(sb, "CardInst", s_blob.CardInstanceCount <= CombatSimLayout.CardInstanceCap,
+        CheckBlobCondition(section, "CardInst", s_blob.CardInstanceCount <= CombatSimLayout.CardInstanceCap,
             $"count={s_blob.CardInstanceCount} cap={CombatSimLayout.CardInstanceCap}", ref allOk);
-        CheckBlobCondition(sb, "ModUsed", s_blob.CardEnergyModifierUsed <= CombatSchemaV1.Cards.CardEnergyModifierCap,
+        CheckBlobCondition(section, "ModUsed", s_blob.CardEnergyModifierUsed <= CombatSchemaV1.Cards.CardEnergyModifierCap,
             $"used={s_blob.CardEnergyModifierUsed} cap={CombatSchemaV1.Cards.CardEnergyModifierCap}", ref allOk);
-        DiffBlobMoveTableHandles(sb, ref allOk);
-        DiffBlobCardEnergySlices(sb, ref allOk);
-        DiffBlobCleanupMutations(sb, ref allOk);
+        DiffBlobMoveTableHandles(section, ref allOk);
+        DiffBlobCardEnergySlices(section, ref allOk);
+        DiffBlobCleanupMutations(section, ref allOk);
     }
 
-    private static void DiffBlobCleanupMutations(StringBuilder sb, ref bool allOk)
+    private static void DiffBlobCleanupMutations(CombatBlobVerificationSection section, ref bool allOk)
     {
         int handCount = s_blob.HandCount;
-        DiffBlobCleanupMutationSet(sb, "B.PlayCln", handCount, endOfTurn: false, ref allOk);
-        DiffBlobCleanupMutationSet(sb, "B.TurnCln", handCount, endOfTurn: true, ref allOk);
+        DiffBlobCleanupMutationSet(section, "B.PlayCln", handCount, endOfTurn: false, ref allOk);
+        DiffBlobCleanupMutationSet(section, "B.TurnCln", handCount, endOfTurn: true, ref allOk);
     }
 
     private static void DiffBlobCleanupMutationSet(
-        StringBuilder sb,
+        CombatBlobVerificationSection section,
         string tag,
         int handCount,
         bool endOfTurn,
@@ -291,7 +329,7 @@ internal static class CombatBlobVerifier
     {
         if (handCount == 0)
         {
-            sb.AppendLine($"✓ {tag}(0)");
+            AddData(section, $"✓ {tag}(0)");
             return;
         }
 
@@ -329,16 +367,16 @@ internal static class CombatBlobVerifier
 
         if (diffs == 0)
         {
-            sb.AppendLine($"✓ {tag}({handCount})");
+            AddData(section, $"✓ {tag}({handCount})");
             return;
         }
 
         allOk = false;
-        sb.AppendLine($"✗ {tag}: {diffs} diff(s)");
-        if (firstMismatches.Length > 0) sb.Append(firstMismatches);
+        AddStandalone(section, $"✗ {tag}: {diffs} diff(s)");
+        AddBufferedStandaloneLines(section, firstMismatches);
     }
 
-    private static void DiffOrbs(StringBuilder sb, PlayerCombatState pcs, ref bool allOk)
+    private static void DiffOrbs(CombatBlobVerificationSection section, PlayerCombatState pcs, ref bool allOk)
     {
         var queue = pcs.OrbQueue;
         var orbs = queue.Orbs;
@@ -357,12 +395,12 @@ internal static class CombatBlobVerifier
             liveSlots[i] = SimOrb.Pack(type, mut);
         }
 
-        DiffValue(sb, "OrbN", s_blob.OrbCount, (byte)orbs.Count, ref allOk);
-        DiffValue(sb, "OrbCap", s_blob.OrbCapacity, (byte)queue.Capacity, ref allOk);
-        DiffSpan<ushort>(sb, "Orbs", s_blob.OrbSlots, liveSlots, ref allOk);
+        DiffValue(section, "OrbN", s_blob.OrbCount, (byte)orbs.Count, ref allOk);
+        DiffValue(section, "OrbCap", s_blob.OrbCapacity, (byte)queue.Capacity, ref allOk);
+        DiffSpan<ushort>(section, "Orbs", s_blob.OrbSlots, liveSlots, ref allOk);
     }
 
-    private static void DiffOsty(StringBuilder sb, PlayerCombatState pcs, ref bool allOk)
+    private static void DiffOsty(CombatBlobVerificationSection section, PlayerCombatState pcs, ref bool allOk)
     {
         Creature? livePet = pcs.GetPet<Osty>();
         SimPet liveOsty = default;
@@ -379,35 +417,35 @@ internal static class CombatBlobVerifier
             livePowers = livePet.Powers;
         }
 
-        DiffValue(sb, "Osty", s_blob.Osty, liveOsty, ref allOk);
-        DiffPowers(sb, "Osty.Pwr", livePowers, s_blob.OstyPowers, ref allOk);
-        DiffValue(sb, "Osty.PwrI", s_blob.OstyPowerInternal, ReadLivePowerInternal(livePowers), ref allOk);
+        DiffValue(section, "Osty", s_blob.Osty, liveOsty, ref allOk);
+        DiffPowers(section, "Osty.Pwr", livePowers, s_blob.OstyPowers, ref allOk);
+        DiffValue(section, "Osty.PwrI", s_blob.OstyPowerInternal, ReadLivePowerInternal(livePowers), ref allOk);
     }
 
     private static bool SimLocalCostModifierEquals(in SimLocalCostModifier left, in SimLocalCostModifier right)
         => left.Amount == right.Amount
         && left.Flags == right.Flags;
 
-    private static void DiffValue<T>(StringBuilder sb, string tag, T blob, T live, ref bool allOk)
+    private static void DiffValue<T>(CombatBlobVerificationSection section, string tag, T blob, T live, ref bool allOk)
         where T : struct, IEquatable<T>
     {
         if (blob.Equals(live))
         {
-            sb.AppendLine($"✓ {tag}={blob}");
+            AddData(section, $"✓ {tag}={blob}");
             return;
         }
 
         allOk = false;
-        sb.AppendLine($"✗ {tag}: blob={blob} live={live}");
+        AddStandalone(section, $"✗ {tag}: blob={blob} live={live}");
     }
 
-    private static void DiffSpan<T>(StringBuilder sb, string tag, ReadOnlySpan<T> blob, ReadOnlySpan<T> live, ref bool allOk)
+    private static void DiffSpan<T>(CombatBlobVerificationSection section, string tag, ReadOnlySpan<T> blob, ReadOnlySpan<T> live, ref bool allOk)
         where T : unmanaged, IEquatable<T>
     {
         if (blob.Length == live.Length
             && MemoryMarshal.AsBytes(blob).SequenceEqual(MemoryMarshal.AsBytes(live)))
         {
-            sb.AppendLine($"✓ {tag}({blob.Length})");
+            AddData(section, $"✓ {tag}({blob.Length})");
             return;
         }
 
@@ -425,8 +463,8 @@ internal static class CombatBlobVerifier
                 msgs.AppendLine($"  ✗ {tag}[{i}]: blob={blob[i]} live={live[i]}");
         }
 
-        sb.AppendLine($"✗ {tag}: {diffs} diff(s), blobN={blob.Length} liveN={live.Length}");
-        if (msgs.Length > 0) sb.Append(msgs);
+        AddStandalone(section, $"✗ {tag}: {diffs} diff(s), blobN={blob.Length} liveN={live.Length}");
+        AddBufferedStandaloneLines(section, msgs);
     }
 
     private static SimPowerInternal ReadLivePowerInternal(IReadOnlyList<PowerModel> powers)
@@ -549,7 +587,7 @@ internal static class CombatBlobVerifier
     private static short ClampS16(int value)
         => value < short.MinValue ? short.MinValue : value > short.MaxValue ? short.MaxValue : (short)value;
 
-    private static void DiffBlobMoveTableHandles(StringBuilder sb, ref bool allOk)
+    private static void DiffBlobMoveTableHandles(CombatBlobVerificationSection section, ref bool allOk)
     {
         int diffs = 0;
         var msgs = new StringBuilder(96);
@@ -570,16 +608,16 @@ internal static class CombatBlobVerifier
 
         if (diffs == 0)
         {
-            sb.AppendLine($"✓ B.ETbl({s_blob.EnemyCount})");
+            AddData(section, $"✓ B.ETbl({s_blob.EnemyCount})");
             return;
         }
 
         allOk = false;
-        sb.AppendLine($"✗ B.ETbl: {diffs} diff(s)");
-        if (msgs.Length > 0) sb.Append(msgs);
+        AddStandalone(section, $"✗ B.ETbl: {diffs} diff(s)");
+        AddBufferedStandaloneLines(section, msgs);
     }
 
-    private static void DiffBlobCardEnergySlices(StringBuilder sb, ref bool allOk)
+    private static void DiffBlobCardEnergySlices(CombatBlobVerificationSection section, ref bool allOk)
     {
         int checkedCards = 0;
         int diffs = 0;
@@ -591,13 +629,13 @@ internal static class CombatBlobVerifier
 
         if (diffs == 0)
         {
-            sb.AppendLine($"✓ B.EnergySlices({checkedCards})");
+            AddData(section, $"✓ B.EnergySlices({checkedCards})");
             return;
         }
 
         allOk = false;
-        sb.AppendLine($"✗ B.EnergySlices: {diffs} diff(s)");
-        if (msgs.Length > 0) sb.Append(msgs);
+        AddStandalone(section, $"✗ B.EnergySlices: {diffs} diff(s)");
+        AddBufferedStandaloneLines(section, msgs);
     }
 
     private static void CheckBlobCards(
@@ -725,20 +763,20 @@ internal static class CombatBlobVerifier
         return (expiration & 0x01) == 0;
     }
 
-    private static void CheckBlobCondition(StringBuilder sb, string tag, bool ok, string detail, ref bool allOk)
+    private static void CheckBlobCondition(CombatBlobVerificationSection section, string tag, bool ok, string detail, ref bool allOk)
     {
         if (ok)
         {
-            sb.AppendLine($"✓ {tag}");
+            AddData(section, $"✓ {tag}");
             return;
         }
 
         allOk = false;
-        sb.AppendLine($"✗ {tag}: {detail}");
+        AddStandalone(section, $"✗ {tag}: {detail}");
     }
 
     private static void DiffPowers(
-        StringBuilder sb, string tag,
+        CombatBlobVerificationSection section, string tag,
         IReadOnlyList<PowerModel> live, ReadOnlySpan<short> simRow,
         ref bool allOk)
     {
@@ -789,17 +827,17 @@ internal static class CombatBlobVerifier
             int activeCount = 0;
             for (int i = 0; i < liveCount; i++)
                 if (SimPowerRegistry.TryGetIndex(live[i].GetType(), out _)) activeCount++;
-            sb.AppendLine($"✓ {tag}({activeCount})");
+            AddData(section, $"✓ {tag}({activeCount})");
         }
         else
         {
             allOk = false;
-            sb.AppendLine($"✗ {tag}: {diffs} diff(s)");
-            if (msgs.Length > 0) sb.Append(msgs);
+            AddStandalone(section, $"✗ {tag}: {diffs} diff(s)");
+            AddBufferedStandaloneLines(section, msgs);
         }
     }
 
-    private static void DiffIntent(StringBuilder sb, int i, Creature e, ref bool allOk)
+    private static void DiffIntent(CombatBlobVerificationSection section, int i, Creature e, ref bool allOk)
     {
         var move = e.Monster?.NextMove;
         SimIntent liveKind = SimIntent.Unknown;
@@ -859,9 +897,8 @@ internal static class CombatBlobVerifier
         SimIntent simKind = (SimIntent)s_blob.EnemyIntent[i];
         bool kindOk = simKind == liveKind;
         if (!kindOk) allOk = false;
-        sb.AppendLine(kindOk
-            ? $"✓ E{i}.Intent={simKind}"
-            : $"✗ E{i}.Intent: blob={simKind} live={liveKind}");
+        if (kindOk) AddData(section, $"✓ E{i}.Intent={simKind}");
+        else AddStandalone(section, $"✗ E{i}.Intent: blob={simKind} live={liveKind}");
 
         if (liveKind == SimIntent.Attack || liveKind == SimIntent.DeathBlow)
         {
@@ -869,10 +906,10 @@ internal static class CombatBlobVerifier
             byte simHits = s_blob.EnemyIntentHits[i];
             bool dmgOk = simDmg == liveDmg;
             bool hitsOk = simHits == liveHits;
-            if (!dmgOk) { allOk = false; sb.AppendLine($"✗ E{i}.Dmg: blob={simDmg} live={liveDmg}"); }
-            else { sb.AppendLine($"✓ E{i}.Dmg={simDmg}"); }
-            if (!hitsOk) { allOk = false; sb.AppendLine($"✗ E{i}.Hits: blob={simHits} live={liveHits}"); }
-            else { sb.AppendLine($"✓ E{i}.Hits={simHits}"); }
+            if (!dmgOk) { allOk = false; AddStandalone(section, $"✗ E{i}.Dmg: blob={simDmg} live={liveDmg}"); }
+            else { AddData(section, $"✓ E{i}.Dmg={simDmg}"); }
+            if (!hitsOk) { allOk = false; AddStandalone(section, $"✗ E{i}.Hits: blob={simHits} live={liveHits}"); }
+            else { AddData(section, $"✓ E{i}.Hits={simHits}"); }
         }
     }
 
@@ -894,21 +931,21 @@ internal static class CombatBlobVerifier
         return (byte)hits;
     }
 
-    private static unsafe void DiffAllRng(StringBuilder sb, CombatState state, ref bool allOk)
+    private static unsafe void DiffAllRng(CombatBlobVerificationSection section, CombatState state, ref bool allOk)
     {
         var rngSet = state.RunState.Rng;
-        DiffOneRng(sb, "RngShuf", rngSet.Shuffle, SimRngSlot.Shuffle, ref allOk);
-        DiffOneRng(sb, "RngTgt", rngSet.CombatTargets, SimRngSlot.CombatTargets, ref allOk);
-        DiffOneRng(sb, "RngCardGen", rngSet.CombatCardGeneration, SimRngSlot.CombatCardGeneration, ref allOk);
-        DiffOneRng(sb, "RngCardSel", rngSet.CombatCardSelection, SimRngSlot.CombatCardSelection, ref allOk);
-        DiffOneRng(sb, "RngEnergy", rngSet.CombatEnergyCosts, SimRngSlot.CombatEnergyCosts, ref allOk);
-        DiffOneRng(sb, "RngOrb", rngSet.CombatOrbGeneration, SimRngSlot.CombatOrbGeneration, ref allOk);
-        DiffOneRng(sb, "RngMonAi", rngSet.MonsterAi, SimRngSlot.MonsterAi, ref allOk);
-        DiffOneRng(sb, "RngNiche", rngSet.Niche, SimRngSlot.Niche, ref allOk);
+        DiffOneRng(section, "RngShuf", rngSet.Shuffle, SimRngSlot.Shuffle, ref allOk);
+        DiffOneRng(section, "RngTgt", rngSet.CombatTargets, SimRngSlot.CombatTargets, ref allOk);
+        DiffOneRng(section, "RngCardGen", rngSet.CombatCardGeneration, SimRngSlot.CombatCardGeneration, ref allOk);
+        DiffOneRng(section, "RngCardSel", rngSet.CombatCardSelection, SimRngSlot.CombatCardSelection, ref allOk);
+        DiffOneRng(section, "RngEnergy", rngSet.CombatEnergyCosts, SimRngSlot.CombatEnergyCosts, ref allOk);
+        DiffOneRng(section, "RngOrb", rngSet.CombatOrbGeneration, SimRngSlot.CombatOrbGeneration, ref allOk);
+        DiffOneRng(section, "RngMonAi", rngSet.MonsterAi, SimRngSlot.MonsterAi, ref allOk);
+        DiffOneRng(section, "RngNiche", rngSet.Niche, SimRngSlot.Niche, ref allOk);
     }
 
     private static unsafe void DiffOneRng(
-        StringBuilder sb, string tag, Rng liveRng, SimRngSlot slot, ref bool allOk)
+        CombatBlobVerificationSection section, string tag, Rng liveRng, SimRngSlot slot, ref bool allOk)
     {
         try
         {
@@ -929,11 +966,11 @@ internal static class CombatBlobVerifier
                 }
             }
 
-            if (ok) sb.AppendLine($"✓ {tag}");
+            if (ok) AddData(section, $"✓ {tag}");
             else
             {
                 allOk = false;
-                sb.AppendLine(
+                AddStandalone(section,
                     $"✗ {tag}: iN blob={sim.INext} live={live.INext} " +
                     $"iNp blob={sim.INextp} live={live.INextp}");
             }
@@ -941,7 +978,7 @@ internal static class CombatBlobVerifier
         catch (Exception ex)
         {
             allOk = false;
-            sb.AppendLine($"✗ {tag} threw: {ex.Message}");
+            AddStandalone(section, $"✗ {tag} threw: {ex.Message}");
         }
     }
 
