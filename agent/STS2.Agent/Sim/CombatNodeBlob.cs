@@ -54,6 +54,7 @@ internal sealed class CombatNodeBlob
     public ref ushort CardEnergyModifierUsed => ref RefAt<ushort>(CombatSchemaV1.Cards.CardEnergyModifierUsedOffset);
 
     public ref byte Round => ref RefAt<byte>(CombatSchemaV1.Player.RoundOffset);
+    public ref byte CurrentSide => ref RefAt<byte>(CombatSchemaV1.Player.CurrentSideOffset);
     public ref ushort PlayerHp => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerHpOffset);
     public ref ushort PlayerMaxHp => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerMaxHpOffset);
     public ref ushort PlayerBlock => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerBlockOffset);

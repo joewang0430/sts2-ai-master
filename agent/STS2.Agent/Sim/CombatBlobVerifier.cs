@@ -93,6 +93,7 @@ internal static class CombatBlobVerifier
         }
 
         Cmp("Round", s_blob.Round, state.RoundNumber);
+    Cmp("Side", s_blob.CurrentSide, (byte)state.CurrentSide);
         Cmp("HP", s_blob.PlayerHp, pc.CurrentHp);
         Cmp("MaxHP", s_blob.PlayerMaxHp, pc.MaxHp);
         Cmp("Block", s_blob.PlayerBlock, pc.Block);

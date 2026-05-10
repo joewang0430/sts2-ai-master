@@ -173,6 +173,7 @@ internal static class CombatSchemaV1
         public static readonly int PlayerPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
 
         public static readonly int RoundOffset;
+        public static readonly int CurrentSideOffset;
         public static readonly int PlayerHpOffset;
         public static readonly int PlayerMaxHpOffset;
         public static readonly int PlayerBlockOffset;
@@ -188,6 +189,9 @@ internal static class CombatSchemaV1
             int offset = Cards.TotalBytes;
 
             RoundOffset = offset;
+            offset += sizeof(byte);
+
+            CurrentSideOffset = offset;
             offset += sizeof(byte);
 
             offset = AlignUp(offset, sizeof(ushort));
