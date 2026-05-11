@@ -17,6 +17,7 @@ using MegaCrit.Sts2.Core.Extensions;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Random;
 using MegaCrit.Sts2.Core.Rooms;
+using STS2.Agent;
 using STS2.Agent.Sim;
 
 namespace STS2.Agent.Ui;
@@ -85,20 +86,11 @@ internal static class CombatDebugOverlay
     private static VBoxContainer? _potionButtonBox;
     private static Label?         _potionApprovedLabel;
 
-    // Authoritative toggle state: keys are PotionModel.Id.Entry.
-    // Written only by button Pressed handlers; read by the AI layer via AllowedPotionIds.
-    // Cleared on every OnCombatEnded so each fight starts with a fresh selection.
-    private static readonly HashSet<string>            _allowedPotionIds = new();
-    // Id.Entry → Button node (for text updates on toggle and on potion consumption).
-    private static readonly Dictionary<string, Button> _potionButtons    = new();
-    // Id.Entry → localized display title (stable within a combat).
-    private static readonly Dictionary<string, string> _potionTitles     = new();
-
-    /// <summary>
-    /// Potion IDs the player has approved for AI use this combat.
-    /// Read by the AI search layer; never modified by it.
-    /// </summary>
-    internal static IReadOnlySet<string> AllowedPotionIds => _allowedPotionIds;
+    // Authoritative toggle state lives in CombatPotionApprovalState and is keyed
+    // by (player, slot, current potion id), so duplicate potions and slot reuse
+    // never alias each other.
+    private static readonly Dictionary<CombatPotionApprovalKey, Button> _potionButtons = new();
+    private static readonly Dictionary<CombatPotionApprovalKey, string> _potionTitles = new();
 
     // ── Initialization ────────────────────────────────────────────────────────
 
@@ -328,7 +320,7 @@ internal static class CombatDebugOverlay
         _potionButtonBox     = null;
         _potionApprovedLabel = null;
         _potionLayer         = null;
-        _allowedPotionIds.Clear();
+        CombatPotionApprovalState.Clear();
         _potionButtons.Clear();
         _potionTitles.Clear();
         _liveFromLastRefresh   = null;
@@ -392,15 +384,16 @@ internal static class CombatDebugOverlay
             // A consumed potion is NOT divergence — RefreshPotionButtons disables
             // it in place so the user can still see what was available.
             Player? me   = LocalContext.GetMe(_state);
-            var     live = me?.Potions
-                               .Where(p => p.Usage == PotionUsage.CombatOnly || p.Usage == PotionUsage.AnyTime)
-                               .Select(p => p.Id.Entry)
-                               .ToHashSet()
-                           ?? new HashSet<string>();
+            if (me is not null)
+                CombatPotionApprovalState.SyncToPlayer(me);
+
+            HashSet<CombatPotionApprovalKey> live = me is null
+                ? new HashSet<CombatPotionApprovalKey>()
+                : GetCombatPotionEntries(me).Select(static entry => entry.Key).ToHashSet();
 
             bool needsRebuild = _potionButtons.Count == 0
                 ? live.Count > 0
-                : live.Any(id => !_potionButtons.ContainsKey(id));
+                : live.Any(key => !_potionButtons.ContainsKey(key));
 
             if (needsRebuild)
                 RebuildPotionButtons(_state);
@@ -815,10 +808,8 @@ internal static class CombatDebugOverlay
         Player? me = LocalContext.GetMe(state);
         if (me is null) return;
 
-        // Only potions that can be actively triggered by the player during combat.
-        var combatPotions = me.Potions
-            .Where(p => p.Usage == PotionUsage.CombatOnly || p.Usage == PotionUsage.AnyTime)
-            .ToList();
+        CombatPotionApprovalState.SyncToPlayer(me);
+        List<(CombatPotionApprovalKey Key, int SlotIndex, PotionModel Potion)> combatPotions = GetCombatPotionEntries(me);
 
         // Non-interactive header label.
         var header = new Label { Text = $"── POTIONS ({combatPotions.Count}) ──" };
@@ -826,15 +817,14 @@ internal static class CombatDebugOverlay
         header.MouseFilter = Control.MouseFilterEnum.Ignore;
         _potionButtonBox.AddChild(header);
 
-        foreach (PotionModel potion in combatPotions)
+        foreach (var (key, slotIndex, potion) in combatPotions)
         {
-            string id    = potion.Id.Entry;
-            string title = potion.Title.GetFormattedText();
-            _potionTitles[id] = title;
+            string title = $"[{slotIndex + 1}] {potion.Title.GetFormattedText()}";
+            _potionTitles[key] = title;
 
             var btn = new Button
             {
-                Text              = GetPotionButtonText(id),
+                Text              = GetPotionButtonText(key),
                 CustomMinimumSize = new Vector2(200f, 24f),
                 ZIndex            = 100,
                 // MouseFilter defaults to Stop: button consumes mouse events,
@@ -842,24 +832,22 @@ internal static class CombatDebugOverlay
             };
             btn.AddThemeFontSizeOverride("font_size", 12);
 
-            string capturedId = id;
+            CombatPotionApprovalKey capturedKey = key;
             btn.Pressed += () =>
             {
-                // Toggle the authoritative selection set.
-                if (!_allowedPotionIds.Remove(capturedId))
-                    _allowedPotionIds.Add(capturedId);
+                _ = CombatPotionApprovalState.Toggle(capturedKey);
 
                 // Update only this button's label — no full scene Refresh needed.
-                if (_potionButtons.TryGetValue(capturedId, out Button? b)
+                if (_potionButtons.TryGetValue(capturedKey, out Button? b)
                     && GodotObject.IsInstanceValid(b))
                 {
-                    b.Text = GetPotionButtonText(capturedId);
+                    b.Text = GetPotionButtonText(capturedKey);
                 }
                 UpdateApprovedLabel();
             };
 
             _potionButtonBox.AddChild(btn);
-            _potionButtons[id] = btn;
+            _potionButtons[key] = btn;
         }
 
         if (combatPotions.Count == 0)
@@ -882,31 +870,31 @@ internal static class CombatDebugOverlay
         if (_potionButtons.Count == 0) return;
 
         Player? me = LocalContext.GetMe(state);
-        var alive = me?.Potions.Select(p => p.Id.Entry).ToHashSet()
-                    ?? new HashSet<string>();
+        if (me is not null)
+            CombatPotionApprovalState.SyncToPlayer(me);
 
-        // If a potion was consumed mid-combat, evict it from the allowed set
-        // so the AI never operates on a stale approval.
-        _allowedPotionIds.IntersectWith(alive);
+        HashSet<CombatPotionApprovalKey> alive = me is null
+            ? new HashSet<CombatPotionApprovalKey>()
+            : GetCombatPotionEntries(me).Select(static entry => entry.Key).ToHashSet();
 
-        foreach (var (id, btn) in _potionButtons)
+        foreach (var (key, btn) in _potionButtons)
         {
             if (!GodotObject.IsInstanceValid(btn)) continue;
-            bool consumed = !alive.Contains(id);
+            bool consumed = !alive.Contains(key);
             btn.Disabled = consumed;
             btn.Text = consumed
-                ? $"[x] {(_potionTitles.TryGetValue(id, out string? t) ? t : id)}"
-                : GetPotionButtonText(id);
+                ? $"[x] {(_potionTitles.TryGetValue(key, out string? t) ? t : key.PotionId)}"
+                : GetPotionButtonText(key);
         }
 
         UpdateApprovedLabel();
     }
 
     /// <summary>Returns the toggle-prefix + localized title for a potion button.</summary>
-    private static string GetPotionButtonText(string id)
+    private static string GetPotionButtonText(CombatPotionApprovalKey key)
     {
-        string title = _potionTitles.TryGetValue(id, out string? t) ? t : id;
-        return (_allowedPotionIds.Contains(id) ? "[v] " : "[ ] ") + title;
+        string title = _potionTitles.TryGetValue(key, out string? t) ? t : key.PotionId;
+        return (CombatPotionApprovalState.IsAllowed(key) ? "[v] " : "[ ] ") + title;
     }
 
     /// <summary>
@@ -919,14 +907,41 @@ internal static class CombatDebugOverlay
         if (_state is null) { _potionApprovedLabel.Text = string.Empty; return; }
 
         Player? me = LocalContext.GetMe(_state);
-        var alive = me?.Potions.Select(p => p.Id.Entry).ToHashSet()
-                    ?? new HashSet<string>();
+        if (me is null)
+        {
+            _potionApprovedLabel.Text = "── AI POTIONS ──\n  (none)";
+            return;
+        }
 
-        var approved = _allowedPotionIds.Where(id => alive.Contains(id)).ToList();
+        CombatPotionApprovalState.SyncToPlayer(me);
+        List<string> approved = GetCombatPotionEntries(me)
+            .Where(entry => CombatPotionApprovalState.IsAllowed(entry.Key))
+            .Select(entry => _potionTitles.TryGetValue(entry.Key, out string? title)
+                ? title
+                : $"[{entry.SlotIndex + 1}] {entry.Potion.Id.Entry}")
+            .ToList();
         _potionApprovedLabel.Text = approved.Count == 0
             ? "── AI POTIONS ──\n  (none)"
-            : "── AI POTIONS ──\n" + string.Join("\n", approved.Select(id =>
-                $"  {(_potionTitles.TryGetValue(id, out string? t) ? t : id)}"));
+            : "── AI POTIONS ──\n" + string.Join("\n", approved.Select(title => $"  {title}"));
+    }
+
+    private static List<(CombatPotionApprovalKey Key, int SlotIndex, PotionModel Potion)> GetCombatPotionEntries(Player me)
+    {
+        List<(CombatPotionApprovalKey Key, int SlotIndex, PotionModel Potion)> entries = new();
+        IReadOnlyList<PotionModel?> slots = me.PotionSlots;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            PotionModel? potion = slots[i];
+            if (potion is null)
+                continue;
+
+            if (potion.Usage != PotionUsage.CombatOnly && potion.Usage != PotionUsage.AnyTime)
+                continue;
+
+            entries.Add((CombatPotionApprovalState.CreateKey(me, i, potion), i, potion));
+        }
+
+        return entries;
     }
 
     // ── Harmony patch ─────────────────────────────────────────────────────────

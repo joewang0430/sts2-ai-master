@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.MonsterMoves.MonsterMoveStateMachine;
+using STS2.Agent;
 
 namespace STS2.Agent.Sim;
 
@@ -54,6 +55,7 @@ internal static class CombatNodeBlobSnapshot
         dst.Energy = ClampU16(pcs.Energy);
         dst.MaxEnergy = ClampU16(pcs.MaxEnergy);
         dst.PlayerStars = ClampU16(pcs.Stars);
+        SnapshotPotions(player, dst);
 
         WritePowers(playerCreature.Powers, dst.PlayerPowers);
         SimPowerInternal playerPowerInternal = default;
@@ -154,6 +156,32 @@ internal static class CombatNodeBlobSnapshot
             PowerModel power = powers[i];
             if (SimPowerRegistry.TryGetIndex(power.GetType(), out int idx))
                 flat[rowBase + idx] = ClampS16(power.Amount);
+        }
+    }
+
+    private static void SnapshotPotions(Player player, CombatNodeBlob dst)
+    {
+        int slotCount = player.MaxPotionCount;
+        if (slotCount > CombatSimLayout.PotionSlotCap)
+        {
+            throw new InvalidOperationException(
+                $"CombatNodeBlobSnapshot: player has {slotCount} potion slots > PotionSlotCap={CombatSimLayout.PotionSlotCap}.");
+        }
+
+        CombatPotionApprovalState.SyncToPlayer(player);
+
+        dst.PlayerPotionSlotCount = ClampU8(slotCount);
+        dst.PlayerCanRemovePotions = player.CanRemovePotions ? (byte)1 : (byte)0;
+
+        IReadOnlyList<PotionModel?> slots = player.PotionSlots;
+        for (int i = 0; i < slots.Count; i++)
+        {
+            PotionModel? potion = slots[i];
+            if (potion is null)
+                continue;
+
+            bool allowAi = CombatPotionApprovalState.IsAllowed(player, i, potion);
+            dst.PlayerPotions[i] = SimPotionSlot.From(potion, allowAi);
         }
     }
 

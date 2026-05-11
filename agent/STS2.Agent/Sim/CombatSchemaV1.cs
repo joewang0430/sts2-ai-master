@@ -6,7 +6,7 @@ namespace STS2.Agent.Sim;
 /// <summary>
 /// Versioned byte layout for the first parallel NodeBlob prototype.
 ///
-/// V1 currently carries the full card slice, the player scalar/power/orb/pet
+/// V1 currently carries the full card slice, the player scalar/power/potion/orb/pet
 /// block, the enemy hot scalar+intent+power+move-state block, and the combat
 /// RNG block. This gives us one frozen byte layout for the state slices that
 /// already exist in the live snapshot path.
@@ -16,6 +16,7 @@ internal static class CombatSchemaV1
     public const int Version = 1;
 
     public static readonly int SimCardSize = Unsafe.SizeOf<SimCard>();
+    public static readonly int SimPotionSlotSize = Unsafe.SizeOf<SimPotionSlot>();
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
     public static readonly int SimTemporaryStarCostSize = Unsafe.SizeOf<SimTemporaryStarCost>();
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
@@ -33,6 +34,13 @@ internal static class CombatSchemaV1
             throw new InvalidOperationException(
                 $"CombatSchemaV1: expected SimCard size 13, got {SimCardSize}. " +
                 "Card hot-core layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (SimPotionSlotSize != 3)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimPotionSlot size 3, got {SimPotionSlotSize}. " +
+                "Potion-slot layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
         if (SimLocalCostModifierSize != 2)
@@ -207,6 +215,7 @@ internal static class CombatSchemaV1
     {
         public static readonly int PlayerPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
         public static readonly int PlayerPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
+        public static readonly int PlayerPotionsBytes = CombatSimLayout.PotionSlotCap * CombatSchemaV1.SimPotionSlotSize;
 
         public static readonly int RoundOffset;
         public static readonly int CurrentSideOffset;
@@ -218,6 +227,9 @@ internal static class CombatSchemaV1
         public static readonly int PlayerStarsOffset;
         public static readonly int PlayerPowersOffset;
         public static readonly int PlayerPowerInternalOffset;
+        public static readonly int PlayerPotionSlotCountOffset;
+        public static readonly int PlayerCanRemovePotionsOffset;
+        public static readonly int PlayerPotionsOffset;
         public static readonly int TotalBytes;
 
         static Player()
@@ -255,6 +267,15 @@ internal static class CombatSchemaV1
 
             PlayerPowerInternalOffset = offset;
             offset += PlayerPowerInternalBytes;
+
+            PlayerPotionSlotCountOffset = offset;
+            offset += sizeof(byte);
+
+            PlayerCanRemovePotionsOffset = offset;
+            offset += sizeof(byte);
+
+            PlayerPotionsOffset = offset;
+            offset += PlayerPotionsBytes;
 
             TotalBytes = offset;
         }

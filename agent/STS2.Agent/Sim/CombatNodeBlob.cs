@@ -44,6 +44,7 @@ internal sealed class CombatNodeBlob
     public Span<SimPowerInternal> EnemyPowerInternal => CastSlice<SimPowerInternal>(CombatSchemaV1.Enemies.EnemyPowerInternalOffset, CombatSchemaV1.Enemies.EnemyPowerInternalBytes);
     public Span<SimEnemyMoveSM> EnemyMoveSM => CastSlice<SimEnemyMoveSM>(CombatSchemaV1.Enemies.EnemyMoveSmOffset, CombatSchemaV1.Enemies.EnemyMoveSmBytes);
     public Span<ushort> EnemyMoveTableHandles => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyMoveTableHandleOffset, CombatSchemaV1.Enemies.EnemyMoveTableHandleBytes);
+    public Span<SimPotionSlot> PlayerPotions => CastSlice<SimPotionSlot>(CombatSchemaV1.Player.PlayerPotionsOffset, CombatSchemaV1.Player.PlayerPotionsBytes);
     public Span<short> PlayerPowers => CastSlice<short>(CombatSchemaV1.Player.PlayerPowersOffset, CombatSchemaV1.Player.PlayerPowersBytes);
     public Span<ushort> OrbSlots => CastSlice<ushort>(CombatSchemaV1.Runtime.OrbSlotsOffset, CombatSchemaV1.Runtime.OrbSlotsBytes);
     public Span<short> OstyPowers => CastSlice<short>(CombatSchemaV1.Runtime.OstyPowersOffset, CombatSchemaV1.Runtime.OstyPowersBytes);
@@ -66,6 +67,8 @@ internal sealed class CombatNodeBlob
     public ref ushort MaxEnergy => ref RefAt<ushort>(CombatSchemaV1.Player.MaxEnergyOffset);
     public ref ushort PlayerStars => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerStarsOffset);
     public ref SimPowerInternal PlayerPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Player.PlayerPowerInternalOffset);
+    public ref byte PlayerPotionSlotCount => ref RefAt<byte>(CombatSchemaV1.Player.PlayerPotionSlotCountOffset);
+    public ref byte PlayerCanRemovePotions => ref RefAt<byte>(CombatSchemaV1.Player.PlayerCanRemovePotionsOffset);
     public ref byte EnemyCount => ref RefAt<byte>(CombatSchemaV1.Enemies.EnemyCountOffset);
     public ref byte OrbCount => ref RefAt<byte>(CombatSchemaV1.Runtime.OrbCountOffset);
     public ref byte OrbCapacity => ref RefAt<byte>(CombatSchemaV1.Runtime.OrbCapacityOffset);

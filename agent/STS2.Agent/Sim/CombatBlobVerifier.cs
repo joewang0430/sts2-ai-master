@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.Models.Orbs;
 using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.Random;
+using STS2.Agent;
 
 namespace STS2.Agent.Sim;
 
@@ -110,10 +111,13 @@ internal static class CombatBlobVerifier
             Cmp("Energy", s_blob.Energy, pcs.Energy);
             Cmp("MaxEnergy", s_blob.MaxEnergy, pcs.MaxEnergy);
             Cmp("Stars", s_blob.PlayerStars, pcs.Stars);
+            Cmp("PotCap", s_blob.PlayerPotionSlotCount, (byte)me.MaxPotionCount);
+            Cmp("PotRm", s_blob.PlayerCanRemovePotions, me.CanRemovePotions ? (byte)1 : (byte)0);
             Cmp("HandN", simHandCount, pcs.Hand.Cards.Count);
             Cmp("DrawN", simDrawCount, pcs.DrawPile.Cards.Count);
             Cmp("DiscN", simDiscCount, pcs.DiscardPile.Cards.Count);
             Cmp("ExhN", simExhaustCount, pcs.ExhaustPile.Cards.Count);
+            DiffPotions(sim, me, ref simAllOk);
             DiffHistoryCounters(sim, state, me, ref simAllOk);
             DiffOrbs(sim, pcs, ref simAllOk);
             DiffOsty(sim, pcs, ref simAllOk);
@@ -318,6 +322,8 @@ internal static class CombatBlobVerifier
             $"count={s_blob.EnemyCount} cap={CombatSimLayout.EnemyCap}", ref allOk);
         CheckBlobCondition(section, "OrbCap", s_blob.OrbCount <= s_blob.OrbCapacity && s_blob.OrbCapacity <= 10,
             $"count={s_blob.OrbCount} cap={s_blob.OrbCapacity}", ref allOk);
+        CheckBlobCondition(section, "PotionCap", s_blob.PlayerPotionSlotCount <= CombatSimLayout.PotionSlotCap,
+            $"count={s_blob.PlayerPotionSlotCount} cap={CombatSimLayout.PotionSlotCap}", ref allOk);
         CheckBlobCondition(section, "CardInst", s_blob.CardInstanceCount <= CombatSimLayout.CardInstanceCap,
             $"count={s_blob.CardInstanceCount} cap={CombatSimLayout.CardInstanceCap}", ref allOk);
         CheckBlobCondition(section, "ModUsed", s_blob.CardEnergyModifierUsed <= CombatSchemaV1.Cards.CardEnergyModifierCap,
@@ -454,6 +460,46 @@ internal static class CombatBlobVerifier
         DiffValue(section, "Osty", s_blob.Osty, liveOsty, ref allOk);
         DiffPowers(section, "Osty.Pwr", livePowers, s_blob.OstyPowers, ref allOk);
         DiffValue(section, "Osty.PwrI", s_blob.OstyPowerInternal, ReadLivePowerInternal(livePowers), ref allOk);
+    }
+
+    private static void DiffPotions(CombatBlobVerificationSection section, Player player, ref bool allOk)
+    {
+        CombatPotionApprovalState.SyncToPlayer(player);
+
+        IReadOnlyList<PotionModel?> liveSlots = player.PotionSlots;
+        int simCount = s_blob.PlayerPotionSlotCount;
+        int n = Math.Min(simCount, liveSlots.Count);
+        int diffs = 0;
+        var firstMismatches = new StringBuilder(96);
+
+        for (int i = 0; i < n; i++)
+        {
+            PotionModel? livePotion = liveSlots[i];
+            SimPotionSlot liveSlot = livePotion is null
+                ? default
+                : SimPotionSlot.From(livePotion, CombatPotionApprovalState.IsAllowed(player, i, livePotion));
+
+            SimPotionSlot blobSlot = s_blob.PlayerPotions[i];
+            if (blobSlot.Equals(liveSlot))
+                continue;
+
+            diffs++;
+            if (diffs <= 3)
+            {
+                firstMismatches.AppendLine(
+                    $"  ✗ Pot[{i}]: blob={DescribePotionSlot(in blobSlot)} live={DescribePotionSlot(in liveSlot)}");
+            }
+        }
+
+        if (diffs == 0 && simCount == liveSlots.Count)
+        {
+            AddData(section, $"✓ Potions({n})");
+            return;
+        }
+
+        allOk = false;
+        AddStandalone(section, $"✗ Potions: {diffs} mismatch(es), simN={simCount} liveN={liveSlots.Count}");
+        AddBufferedStandaloneLines(section, firstMismatches);
     }
 
     private static void DiffHistoryCounters(CombatBlobVerificationSection section, CombatState state, Player me, ref bool allOk)
@@ -956,6 +1002,11 @@ internal static class CombatBlobVerifier
 
     private static string DescribeTemporaryStarCost(in SimTemporaryStarCost cost)
         => $"cost={cost.Cost} turn={cost.ClearsWhenTurnEnds} played={cost.ClearsWhenCardIsPlayed}";
+
+    private static string DescribePotionSlot(in SimPotionSlot slot)
+        => slot.IsEmpty
+            ? "<empty>"
+            : $"{SimPotionRegistry.ReversePotionName(slot.PotionId)} allow={slot.AllowAi}";
 
     private static bool IsValidLocalCostModifier(in SimLocalCostModifier modifier)
     {

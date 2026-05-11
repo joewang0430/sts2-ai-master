@@ -9,6 +9,7 @@ namespace STS2.Agent.Sim;
 internal static class CombatSimLayout
 {
     public const int EnemyCap = 6;
+    public const int PotionSlotCap = 10;
     public const int HandCap = CardPile.maxCardsInHand;
     public const int PileCap = 200;
     public const int CardInstanceCap = HandCap + (PileCap * 3) + 1;
