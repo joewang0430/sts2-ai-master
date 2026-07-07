@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using MegaCrit.Sts2.Core.Random;
@@ -58,101 +59,66 @@ internal struct RandomStateBuffer
 }
 
 /// <summary>
-/// Bit-exact mirror of <see cref="System.Random"/>'s internal Knuth-subtractive
-/// state. Stored as an inline <c>unsafe struct</c> with a <c>fixed</c> 56-int
-/// buffer so cloning is one ~228-byte memcpy with zero heap allocation —
-/// required because every DFS search node owns its own RNG, and 100k+ clones
-/// per think tick must not pressure the GC.
+/// Bit-exact mirror of <see cref="MegaCrit.Sts2.Core.Random.MegaRandom"/>'s
+/// internal Xoshiro256** state. Stored as an inline <c>struct</c> of four
+/// <c>ulong</c>s (32 bytes total) so cloning is one small memcpy with zero
+/// heap allocation — required because every DFS search node owns its own RNG,
+/// and 100k+ clones per think tick must not pressure the GC.
 ///
-/// Layout mirrors System.Random+CompatPrng (verified .NET 9, 2026-04):
-///   int[56] _seedArray  →  fixed int Arr[56]
-///   int     _inext      →  int INext
-///   int     _inextp     →  int INextp
+/// Layout mirrors MegaRandom (verified game v0.107.1, 2026-06-18):
+///   ulong _s0, _s1, _s2, _s3  →  ulong S0, S1, S2, S3
 /// </summary>
-internal unsafe struct RandomState : IEquatable<RandomState>
+internal struct RandomState : IEquatable<RandomState>
 {
-    public const int ArrLen = 56;
-
-    /// <summary>Mirrors System.Random+CompatPrng._seedArray (length 56).</summary>
-    public fixed int Arr[ArrLen];
-
-    /// <summary>Mirrors System.Random+CompatPrng._inext.</summary>
-    public int INext;
-
-    /// <summary>Mirrors System.Random+CompatPrng._inextp.</summary>
-    public int INextp;
+    public ulong S0;
+    public ulong S1;
+    public ulong S2;
+    public ulong S3;
 
     public readonly bool Equals(RandomState other)
-    {
-        if (INext != other.INext || INextp != other.INextp)
-            return false;
-
-        for (int i = 0; i < ArrLen; i++)
-        {
-            if (Arr[i] != other.Arr[i])
-                return false;
-        }
-
-        return true;
-    }
+        => S0 == other.S0 && S1 == other.S1 && S2 == other.S2 && S3 == other.S3;
 
     public override readonly bool Equals(object? obj)
         => obj is RandomState other && Equals(other);
 
     public override readonly int GetHashCode()
-    {
-        HashCode hash = new();
-        hash.Add(INext);
-        hash.Add(INextp);
-        for (int i = 0; i < ArrLen; i++)
-            hash.Add(Arr[i]);
-        return hash.ToHashCode();
-    }
+        => HashCode.Combine(S0, S1, S2, S3);
 
     public override readonly string ToString()
-        => $"iN={INext} iNp={INextp}";
+        => $"s0={S0:x} s1={S1:x} s2={S2:x} s3={S3:x}";
 }
 
 /// <summary>
-/// One-shot capture from a live <see cref="System.Random"/> + bit-exact
-/// reproduction of its <c>Next()</c> sequence directly on a
+/// One-shot capture from a live <see cref="MegaRandom"/> + bit-exact
+/// reproduction of its <c>Xoshiro256**</c> sequence directly on a
 /// <see cref="RandomState"/>. Used by FromReal to snapshot the game's shuffle
 /// RNG, and by the sim card-effect code (Discovery / draw / etc.) to draw
 /// future cards on the cloned state without touching the real game.
 /// </summary>
-internal static unsafe class RandomStateOps
+internal static class RandomStateOps
 {
-    // Reflection chain to reach the Knuth state inside System.Random. .NET 9 wraps
-    // it in an internal hierarchy (Random._impl → Net5CompatSeedImpl._prng →
-    // CompatPrng._seedArray/_inext/_inextp). All FieldInfos cached at type init;
-    // a layout change in a future .NET update will throw at startup with a clear
-    // message rather than corrupt state silently.
-    private static readonly FieldInfo F_impl;
-    private static readonly FieldInfo F_prng;
-    private static readonly FieldInfo F_seedArr;
-    private static readonly FieldInfo F_inext;
-    private static readonly FieldInfo F_inextp;
+    private const double Incr = 1.1102230246251565E-16; // 2^-53, matches MegaRandom._incrDouble
 
-    /// <summary>Path from game's <see cref="Rng"/> wrapper down to its private System.Random.</summary>
+    // Reflection chain to reach MegaRandom's private Xoshiro256** state fields,
+    // plus the game's Rng wrapper's private MegaRandom instance. All FieldInfos
+    // cached at type init; a layout change in a future game update will throw
+    // at startup with a clear message rather than corrupt state silently.
+    private static readonly FieldInfo F_s0;
+    private static readonly FieldInfo F_s1;
+    private static readonly FieldInfo F_s2;
+    private static readonly FieldInfo F_s3;
+
+    /// <summary>Path from game's <see cref="Rng"/> wrapper down to its private MegaRandom.</summary>
     private static readonly FieldInfo F_rngRandom;
 
     static RandomStateOps()
     {
         const BindingFlags BF = BindingFlags.NonPublic | BindingFlags.Instance;
-        var probe = new System.Random(0);
 
-        F_impl = typeof(System.Random).GetField("_impl", BF)
-            ?? throw Err("System.Random._impl");
-        var implObj = F_impl.GetValue(probe)!;
-
-        F_prng = implObj.GetType().GetField("_prng", BF)
-            ?? throw Err($"{implObj.GetType().FullName}._prng (need seeded Random; xoshiro impls are unsupported)");
-        var prngObj = F_prng.GetValue(implObj)!;
-        var prngT = prngObj.GetType();
-
-        F_seedArr = prngT.GetField("_seedArray", BF) ?? throw Err($"{prngT.FullName}._seedArray");
-        F_inext   = prngT.GetField("_inext",     BF) ?? throw Err($"{prngT.FullName}._inext");
-        F_inextp  = prngT.GetField("_inextp",    BF) ?? throw Err($"{prngT.FullName}._inextp");
+        F_s0 = typeof(MegaRandom).GetField("_s0", BF) ?? throw Err("MegaRandom._s0");
+        F_s1 = typeof(MegaRandom).GetField("_s1", BF) ?? throw Err("MegaRandom._s1");
+        F_s2 = typeof(MegaRandom).GetField("_s2", BF) ?? throw Err("MegaRandom._s2");
+        F_s3 = typeof(MegaRandom).GetField("_s3", BF) ?? throw Err("MegaRandom._s3");
 
         F_rngRandom = typeof(Rng).GetField("_random", BF)
             ?? throw Err("MegaCrit.Sts2.Core.Random.Rng._random");
@@ -160,79 +126,72 @@ internal static unsafe class RandomStateOps
 
     private static InvalidOperationException Err(string field) => new(
         $"RandomStateOps: reflection chain broken at '{field}'. " +
-        ".NET internal Random layout changed; update RandomStateOps.");
+        "MegaRandom/Rng internal layout changed; update RandomStateOps.");
 
     /// <summary>
     /// Snapshot <paramref name="src"/>'s current internal state into
-    /// <paramref name="dst"/>. After this call, calling
-    /// <see cref="Next(ref RandomState)"/> on <paramref name="dst"/> produces
-    /// the exact same sequence that <c>src.Next()</c> would.
+    /// <paramref name="dst"/>. After this call, calling <see cref="Next"/> on
+    /// <paramref name="dst"/> produces the exact same sequence that
+    /// <c>src.NextInt()</c>/<c>NextDouble()</c> would.
     /// </summary>
-    public static void Capture(System.Random src, ref RandomState dst)
+    public static void Capture(MegaRandom src, ref RandomState dst)
     {
-        // F_prng.GetValue returns a *boxed copy* of the struct — fine, we only read.
-        object impl = F_impl.GetValue(src) ?? throw new InvalidOperationException("Random._impl is null.");
-        object prng = F_prng.GetValue(impl) ?? throw new InvalidOperationException("Random._impl._prng is null.");
-
-        var arr = (int[])F_seedArr.GetValue(prng)!;
-        if (arr.Length != RandomState.ArrLen)
-            throw new InvalidOperationException(
-                $"RandomStateOps: _seedArray length {arr.Length} != {RandomState.ArrLen}.");
-
-        fixed (int* p = dst.Arr)
-        {
-            for (int i = 0; i < RandomState.ArrLen; i++) p[i] = arr[i];
-        }
-        dst.INext  = (int)F_inext.GetValue(prng)!;
-        dst.INextp = (int)F_inextp.GetValue(prng)!;
+        dst.S0 = (ulong)F_s0.GetValue(src)!;
+        dst.S1 = (ulong)F_s1.GetValue(src)!;
+        dst.S2 = (ulong)F_s2.GetValue(src)!;
+        dst.S3 = (ulong)F_s3.GetValue(src)!;
     }
 
     /// <summary>
-    /// Convenience: capture the underlying <see cref="System.Random"/> out of
+    /// Convenience: capture the underlying <see cref="MegaRandom"/> out of
     /// the game's <see cref="Rng"/> wrapper. One reflection hop (cached) +
-    /// the same Knuth-state copy as <see cref="Capture(System.Random, ref RandomState)"/>.
+    /// the same state copy as <see cref="Capture(MegaRandom, ref RandomState)"/>.
     /// </summary>
     public static void CaptureFromRng(Rng src, ref RandomState dst)
     {
-        var sysRandom = (System.Random?)F_rngRandom.GetValue(src)
+        var megaRandom = (MegaRandom?)F_rngRandom.GetValue(src)
             ?? throw new InvalidOperationException("Rng._random is null.");
-        Capture(sysRandom, ref dst);
+        Capture(megaRandom, ref dst);
     }
 
     /// <summary>
-    /// Bit-exact replication of System.Random+CompatPrng.InternalSample()
-    /// (the seeded legacy Knuth subtractive generator).
-    /// Returns a non-negative int in [0, int.MaxValue).
+    /// Bit-exact replication of MegaRandom.NextULongInner() (Xoshiro256**
+    /// state transition + scrambler). Advances <paramref name="s"/> in place.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int Next(ref RandomState s)
+    private static ulong NextULongInner(ref RandomState s)
     {
-        int locINext  = s.INext;
-        int locINextp = s.INextp;
+        ulong s0 = s.S0, s1 = s.S1, s2 = s.S2, s3 = s.S3;
 
-        // 56-element ring with index 0 unused; indices stay in [1, 55].
-        if (++locINext  >= 56) locINext  = 1;
-        if (++locINextp >= 56) locINextp = 1;
+        ulong result = BitOperations.RotateLeft(s1 * 5, 7) * 9;
+        ulong t = s1 << 17;
 
-        int retVal = s.Arr[locINext] - s.Arr[locINextp];
-        if (retVal == int.MaxValue) retVal--;
-        if (retVal < 0) retVal += int.MaxValue;
+        s2 ^= s0;
+        s3 ^= s1;
+        s1 ^= s2;
+        s0 ^= s3;
+        s2 ^= t;
+        s3 = BitOperations.RotateLeft(s3, 45);
 
-        s.Arr[locINext] = retVal;
-        s.INext  = locINext;
-        s.INextp = locINextp;
-        return retVal;
+        s.S0 = s0; s.S1 = s1; s.S2 = s2; s.S3 = s3;
+        return result;
     }
 
+    /// <summary>Mirrors <see cref="MegaRandom.NextDouble"/>: top 53 bits scaled to [0, 1).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static double NextDouble(ref RandomState s)
+        => (double)(NextULongInner(ref s) >> 11) * Incr;
+
     /// <summary>
-    /// Mirrors <see cref="System.Random.Next(int)"/> for the seeded legacy
-    /// impl: <c>(int)(InternalSample() * (1.0 / int.MaxValue) * maxValue)</c>.
-    /// Returns 0 if <paramref name="maxExclusive"/> &lt;= 1.
+    /// Mirrors <see cref="Rng.NextInt(int)"/> → <c>MegaRandom.Next(int)</c> →
+    /// <c>(int)(NextDouble() * maxValue)</c>. Returns 0 if
+    /// <paramref name="maxExclusive"/> &lt;= 0 (defensive; the real
+    /// <see cref="MegaRandom"/> throws instead, which the sim must not do).
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int Next(ref RandomState s, int maxExclusive)
     {
-        if (maxExclusive <= 1) return 0;
-        return (int)(Next(ref s) * (1.0 / int.MaxValue) * maxExclusive);
+        if (maxExclusive <= 0) return 0;
+        return (int)(NextDouble(ref s) * maxExclusive);
     }
 }

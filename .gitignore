@@ -14,6 +14,7 @@ obj/
 game_source/
 docs/
 dev_docs/
+boss_seed_predictor/
 
 # General OS files
 .DS_Store
@@ -23,3 +24,8 @@ STS2_AI_Master.sln
 
 # User-specific game path overrides (local machine only)
 agent/Directory.Build.user.props
+
+# Claude Code local config/notes (not shared with the repo)
+.claude/
+.claudeignore
+CLAUDE.md

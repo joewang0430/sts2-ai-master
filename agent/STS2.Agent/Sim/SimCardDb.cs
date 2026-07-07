@@ -235,7 +235,7 @@ internal static class SimCardDb
             { typeof(Flechettes), SimCardId.Flechettes },
             { typeof(FlickFlack), SimCardId.FlickFlack },
             { typeof(FocusedStrike), SimCardId.FocusedStrike },
-            { typeof(FollowThrough), SimCardId.FollowThrough },
+            // FollowThrough: removed from the game; SimCardId.FollowThrough slot kept.
             { typeof(Folly), SimCardId.Folly },
             { typeof(Footwork), SimCardId.Footwork },
             { typeof(ForbiddenGrimoire), SimCardId.ForbiddenGrimoire },

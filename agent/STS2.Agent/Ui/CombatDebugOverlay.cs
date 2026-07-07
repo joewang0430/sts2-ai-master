@@ -660,7 +660,7 @@ internal static class CombatDebugOverlay
     //        - the rng we use is a clone of `Player.RunState.Rng.Shuffle`
     //          via `new Rng(seed, counter)`.
     //
-    // The clone preserves the exact System.Random state, so future NextInt()
+    // The clone preserves the exact MegaRandom state, so future NextInt()
     // calls produce the same sequence as the live game would.
 
     private static List<CardModel> ComputePredictedHand(CombatState state, out int handDrawCount)

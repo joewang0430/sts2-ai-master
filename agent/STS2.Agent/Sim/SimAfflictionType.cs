@@ -16,7 +16,8 @@ internal static class SimAfflictionType
     public const byte Hexed      = 5;
     public const byte Ringing    = 6;
     public const byte Smog       = 7;
-    public const byte Weighted   = 8;
+    public const byte Tainted    = 8;
+    public const byte Weighted   = 9;
 
-    public const int Count = 9;
+    public const int Count = 10;
 }

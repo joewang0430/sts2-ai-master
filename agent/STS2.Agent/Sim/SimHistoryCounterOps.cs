@@ -49,7 +49,7 @@ internal static class SimHistoryCounterOps
 
                 case CardPlayFinishedEntry finished when finished.Actor == actor:
                     dst.CardsFinishedAllCombat = ClampInc(dst.CardsFinishedAllCombat);
-                    if (finished.RoundNumber == combat.RoundNumber - 1)
+                    if (SimHistoryEntryReader.ReadRoundNumber(finished) == combat.RoundNumber - 1)
                         dst.CardsFinishedPreviousRound = ClampInc(dst.CardsFinishedPreviousRound);
                     if (finished.WasEthereal)
                         dst.EtherealCardsFinishedAllCombat = ClampInc(dst.EtherealCardsFinishedAllCombat);
@@ -91,7 +91,7 @@ internal static class SimHistoryCounterOps
                     if (damage.HappenedThisTurn(combat) && damage.Result.UnblockedDamage > 0)
                         dst.Flags |= SimHistoryCounters.FlagPlayerLostHpThisTurn;
 
-                    if (!damage.Result.WasFullyBlocked && damage.RoundNumber + 1 == combat.RoundNumber)
+                    if (!damage.Result.WasFullyBlocked && SimHistoryEntryReader.ReadRoundNumber(damage) + 1 == combat.RoundNumber)
                         dst.Flags |= SimHistoryCounters.FlagPlayerLostHpPreviousRound;
                     break;
             }
@@ -112,7 +112,7 @@ internal static class SimHistoryCounterOps
             ushort flags = 0;
             if (finished.HappenedThisTurn(combat))
                 flags |= SimCard.FlagPlayedThisTurn;
-            if (finished.RoundNumber == previousRound)
+            if (SimHistoryEntryReader.ReadRoundNumber(finished) == previousRound)
                 flags |= SimCard.FlagPlayedPreviousRound;
             if (flags == 0)
                 continue;
@@ -135,7 +135,7 @@ internal static class SimHistoryCounterOps
 
             if (finished.HappenedThisTurn(combat))
                 flags |= SimCard.FlagPlayedThisTurn;
-            if (finished.RoundNumber == previousRound)
+            if (SimHistoryEntryReader.ReadRoundNumber(finished) == previousRound)
                 flags |= SimCard.FlagPlayedPreviousRound;
 
             if ((flags & doneMask) == doneMask)
@@ -157,7 +157,7 @@ internal static class SimHistoryCounterOps
             CardModel card = finished.CardPlay.Card;
             if (!ReferenceEquals(card.Owner, player))
                 continue;
-            if (finished.RoundNumber != previousRound)
+            if (SimHistoryEntryReader.ReadRoundNumber(finished) != previousRound)
                 continue;
             if (card.IsDupe)
                 continue;

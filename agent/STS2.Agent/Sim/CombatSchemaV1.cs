@@ -102,9 +102,9 @@ internal static class CombatSchemaV1
 
     public static class Cards
     {
-        public const int HandCap = CombatSimLayout.HandCap;
+        public static readonly int HandCap = CombatSimLayout.HandCap;
         public const int PileCap = CombatSimLayout.PileCap;
-        public const int CardInstanceCap = CombatSimLayout.CardInstanceCap;
+        public static readonly int CardInstanceCap = CombatSimLayout.CardInstanceCap;
         public const int CardEnergyModifierCap = CombatSimLayout.CardEnergyModifierCap;
         public const int CardTemporaryStarCostCap = CombatSimLayout.CardTemporaryStarCostCap;
 

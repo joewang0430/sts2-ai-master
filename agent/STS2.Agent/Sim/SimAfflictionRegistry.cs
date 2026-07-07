@@ -15,13 +15,14 @@ internal static class SimAfflictionRegistry
         new Dictionary<Type, byte>(SimAfflictionType.Count - 1)
         {
             { typeof(Bound),      SimAfflictionType.Bound },
-            { typeof(Devoured),   SimAfflictionType.Devoured },
             { typeof(Entangled),  SimAfflictionType.Entangled },
             { typeof(Galvanized), SimAfflictionType.Galvanized },
             { typeof(Hexed),      SimAfflictionType.Hexed },
             { typeof(Ringing),    SimAfflictionType.Ringing },
             { typeof(Smog),       SimAfflictionType.Smog },
-            { typeof(Weighted),   SimAfflictionType.Weighted },
+            { typeof(Tainted),    SimAfflictionType.Tainted },
+            // Devoured / Weighted: removed from the game; SimAfflictionType
+            // slots kept (blob layout stable) but never mapped to a live type.
         }.ToFrozenDictionary();
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

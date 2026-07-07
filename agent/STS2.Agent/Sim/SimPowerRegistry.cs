@@ -85,7 +85,7 @@ internal static class SimPowerRegistry
             { typeof(DoomPower), SimPowerType.Doom },
             { typeof(DoubleDamagePower), SimPowerType.DoubleDamage },
             { typeof(DrawCardsNextTurnPower), SimPowerType.DrawCardsNextTurn },
-            { typeof(DrumOfBattlePower), SimPowerType.DrumOfBattle },
+            // DrumOfBattlePower: removed from the game; SimPowerType.DrumOfBattle slot kept.
             { typeof(DuplicationPower), SimPowerType.Duplication },
             { typeof(DyingStarPower), SimPowerType.DyingStar },
             { typeof(EchoFormPower), SimPowerType.EchoForm },
@@ -117,7 +117,7 @@ internal static class SimPowerRegistry
             { typeof(GalvanicPower), SimPowerType.Galvanic },
             { typeof(GenesisPower), SimPowerType.Genesis },
             { typeof(GigantificationPower), SimPowerType.Gigantification },
-            { typeof(GraspPower), SimPowerType.Grasp },
+            // GraspPower: removed from the game; SimPowerType.Grasp slot kept.
             { typeof(GravityPower), SimPowerType.Gravity },
             { typeof(GuardedPower), SimPowerType.Guarded },
             { typeof(HailstormPower), SimPowerType.Hailstorm },
@@ -134,7 +134,7 @@ internal static class SimPowerRegistry
             { typeof(HexPower), SimPowerType.Hex },
             { typeof(HighVoltagePower), SimPowerType.HighVoltage },
             { typeof(HotfixPower), SimPowerType.Hotfix },
-            { typeof(HungerPower), SimPowerType.Hunger },
+            // HungerPower: removed from the game; SimPowerType.Hunger slot kept.
             { typeof(IllusionPower), SimPowerType.Illusion },
             { typeof(ImbalancedPower), SimPowerType.Imbalanced },
             { typeof(ImprovementPower), SimPowerType.Improvement },
@@ -208,7 +208,7 @@ internal static class SimPowerRegistry
             { typeof(RoyaltiesPower), SimPowerType.Royalties },
             { typeof(RupturePower), SimPowerType.Rupture },
             { typeof(SandpitPower), SimPowerType.Sandpit },
-            { typeof(ScrutinyPower), SimPowerType.Scrutiny },
+            // ScrutinyPower: removed from the game; SimPowerType.Scrutiny slot kept.
             { typeof(SeekingEdgePower), SimPowerType.SeekingEdge },
             { typeof(SelfFormingClayPower), SimPowerType.SelfFormingClay },
             { typeof(SentryModePower), SimPowerType.SentryMode },
@@ -254,6 +254,7 @@ internal static class SimPowerRegistry
             { typeof(SwordSagePower), SimPowerType.SwordSage },
             { typeof(SynchronizePower), SimPowerType.Synchronize },
             { typeof(TagTeamPower), SimPowerType.TagTeam },
+            { typeof(TaintedPower), SimPowerType.Tainted },
             { typeof(TangledPower), SimPowerType.Tangled },
             { typeof(TankPower), SimPowerType.Tank },
             { typeof(TenderPower), SimPowerType.Tender },
@@ -280,6 +281,7 @@ internal static class SimPowerRegistry
             { typeof(WasteAwayPower), SimPowerType.WasteAway },
             { typeof(WeakPower), SimPowerType.Weak },
             { typeof(WellLaidPlansPower), SimPowerType.WellLaidPlans },
+            { typeof(WitheringPresencePower), SimPowerType.WitheringPresence },
             { typeof(WraithFormPower), SimPowerType.WraithForm },
         }.ToFrozenDictionary();
 

@@ -255,9 +255,11 @@ internal static class CombatNodeBlobSnapshot
             affId = SimAfflictionRegistry.GetIndexOrNone(affliction.GetType());
             affAmt = ClampU8(affliction.Amount);
 
-            if (affliction is Devoured devoured && devoured.AppliedExhaust)
-                flags |= SimCard.FlagAfflictionAppliedExhaust;
-            if (affliction is Hexed hexed && hexed.AppliedEthereal)
+            // Devoured (AppliedExhaust source) was removed from the game; the flag
+            // slot is kept but can no longer be set.
+            // Hexed no longer stores an "applied" flag — HexPower now grants
+            // Ethereal dynamically whenever the card carries this affliction.
+            if (affliction is Hexed)
                 flags |= SimCard.FlagAfflictionAppliedEthereal;
         }
 

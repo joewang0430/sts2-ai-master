@@ -1208,26 +1208,14 @@ internal static class CombatBlobVerifier
             RandomStateOps.CaptureFromRng(liveRng, ref live);
             RandomState sim = s_blob.Rng(slot);
 
-            bool ok = sim.INext == live.INext && sim.INextp == live.INextp;
-            if (ok)
-            {
-                for (int k = 0; k < RandomState.ArrLen; k++)
-                {
-                    if (sim.Arr[k] != live.Arr[k])
-                    {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
+            bool ok = sim.Equals(live);
 
             if (ok) AddData(section, $"✓ {tag}");
             else
             {
                 allOk = false;
                 AddStandalone(section,
-                    $"✗ {tag}: iN blob={sim.INext} live={live.INext} " +
-                    $"iNp blob={sim.INextp} live={live.INextp}");
+                    $"✗ {tag}: blob={sim} live={live}");
             }
         }
         catch (Exception ex)

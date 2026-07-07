@@ -43,13 +43,13 @@ internal static class SimCaps
 
     private static void VerifyAll()
     {
-        // ── 1. CardPile.maxCardsInHand must equal CombatSimLayout.HandCap (10).
+        // ── 1. CardPile.MaxCardsInHand must equal CombatSimLayout.HandCap (10).
         //    The blob hand slice is fixed-size; if the game ever
         //    raised the cap, snapshot would silently truncate.
-        if (CardPile.maxCardsInHand != CombatSimLayout.HandCap)
+        if (CardPile.MaxCardsInHand != CombatSimLayout.HandCap)
         {
             throw new InvalidOperationException(
-                $"SimCaps: CardPile.maxCardsInHand={CardPile.maxCardsInHand} but " +
+                $"SimCaps: CardPile.MaxCardsInHand={CardPile.MaxCardsInHand} but " +
             $"CombatSimLayout.HandCap={CombatSimLayout.HandCap}. Update HandCap and rebuild.");
         }
 
@@ -222,10 +222,10 @@ internal static class SimCaps
             typeof(SimPowerInternalReader).TypeHandle);
 
         // ── 9. Force initialization of RandomStateOps. Its static field
-        //    chain resolves System.Random internals (_impl/_prng/_seedArray/
-        //    _inext/_inextp) plus the game's Rng._random bridge. Blob snapshot
-        //    uses this for all 8 combat RNG streams; if the .NET or game-side
-        //    layout drifts, fail at startup rather than on first combat diff.
+        //    chain resolves MegaRandom's private Xoshiro256** state fields
+        //    (_s0/_s1/_s2/_s3) plus the game's Rng._random bridge. Blob snapshot
+        //    uses this for all 8 combat RNG streams; if the game-side layout
+        //    drifts, fail at startup rather than on first combat diff.
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(RandomStateOps).TypeHandle);
 
