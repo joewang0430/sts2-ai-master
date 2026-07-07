@@ -57,7 +57,7 @@ internal static class CombatNodeBlobSnapshot
         dst.PlayerStars = ClampU16(pcs.Stars);
         SnapshotPotions(player, dst);
 
-        WritePowers(playerCreature.Powers, dst.PlayerPowers);
+        WritePowerSet(playerCreature.Powers, ref dst.PlayerPowerBitmap, dst.PlayerPowerValues, "player");
         SimPowerInternal playerPowerInternal = default;
         WritePowerInternals(playerCreature.Powers, ref playerPowerInternal);
         dst.PlayerPowerInternal = playerPowerInternal;
@@ -101,8 +101,7 @@ internal static class CombatNodeBlobSnapshot
             dst.EnemyMaxHp[i] = ClampU16(enemy.MaxHp);
             dst.EnemyBlock[i] = ClampU16(enemy.Block);
 
-            int rowBase = i * CombatSimLayout.PowersPerCre;
-            WritePowersRow(enemy.Powers, dst.EnemyPowers, rowBase);
+            WritePowerSet(enemy.Powers, ref dst.EnemyPowerBitmaps[i], SimPowerOps.GetEnemyValues(dst, i), $"enemy[{i}]");
 
             SimPowerInternal enemyPowerInternal = default;
             WritePowerInternals(enemy.Powers, ref enemyPowerInternal);
@@ -139,24 +138,39 @@ internal static class CombatNodeBlobSnapshot
             $"CombatNodeBlobSnapshot: no player creature at index {nth} (have {seen}).");
     }
 
-    private static void WritePowers(IReadOnlyList<PowerModel> powers, Span<short> dst)
+    /// <summary>
+    /// Writes one creature's active powers into a <see cref="SimPowerSet"/> bitmap+values pair.
+    /// Two passes are required: bitmap bits must all be set before any value position is computed
+    /// (see <see cref="SimPowerSet.PositionOf"/>), so a live power resolved early cannot have its
+    /// position finalized until every later power's bit is also known to be set.
+    /// </summary>
+    private static void WritePowerSet(IReadOnlyList<PowerModel> powers, ref SimPowerBitmap bitmap, Span<short> values, string ownerTag)
     {
-        for (int i = 0, n = powers.Count; i < n; i++)
-        {
-            PowerModel power = powers[i];
-            if (SimPowerRegistry.TryGetIndex(power.GetType(), out int idx))
-                dst[idx] = ClampS16(power.Amount);
-        }
-    }
+        Span<int> idxBuf = stackalloc int[SimPowerSet.ValueCap];
+        Span<short> amtBuf = stackalloc short[SimPowerSet.ValueCap];
+        int n = 0;
 
-    private static void WritePowersRow(IReadOnlyList<PowerModel> powers, Span<short> flat, int rowBase)
-    {
-        for (int i = 0, n = powers.Count; i < n; i++)
+        for (int i = 0, count = powers.Count; i < count; i++)
         {
             PowerModel power = powers[i];
-            if (SimPowerRegistry.TryGetIndex(power.GetType(), out int idx))
-                flat[rowBase + idx] = ClampS16(power.Amount);
+            if (!SimPowerRegistry.TryGetIndex(power.GetType(), out int idx))
+                continue;
+
+            if (n >= SimPowerSet.ValueCap)
+            {
+                throw new InvalidOperationException(
+                    $"CombatNodeBlobSnapshot: {ownerTag} has more than {SimPowerSet.ValueCap} active powers. " +
+                    "Raise CombatSimLayout.PowerValueCap.");
+            }
+
+            idxBuf[n] = idx;
+            amtBuf[n] = ClampS16(power.Amount);
+            n++;
+            SimPowerSet.Set(ref bitmap, idx);
         }
+
+        for (int i = 0; i < n; i++)
+            values[SimPowerSet.PositionOf(bitmap, idxBuf[i])] = amtBuf[i];
     }
 
     private static void SnapshotPotions(Player player, CombatNodeBlob dst)
@@ -600,7 +614,7 @@ internal static class CombatNodeBlobSnapshot
             Exists = 1,
         };
 
-        WritePowers(pet.Powers, dst.OstyPowers);
+        WritePowerSet(pet.Powers, ref dst.OstyPowerBitmap, dst.OstyPowerValues, "osty");
         SimPowerInternal ostyPowerInternal = default;
         WritePowerInternals(pet.Powers, ref ostyPowerInternal);
         dst.OstyPowerInternal = ostyPowerInternal;

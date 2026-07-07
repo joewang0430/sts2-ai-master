@@ -2,16 +2,17 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Compile-time integer indices for every PowerModel subclass in the game.
-/// Indices are dense [0, Count) and stored in the blob-backed per-creature
-/// <c>short[Count]</c> power vectors.
+/// Indices are dense [0, Count) and address bit position in the per-creature
+/// <see cref="SimPowerBitmap"/> / slot position (via popcount) in the paired
+/// <see cref="SimPowerValues"/> list — see <see cref="SimPowerSet"/>.
 ///
 /// Hot-path callers reference these as compile-time constants — e.g.
-/// <c>state.PlayerPowers[SimPowerType.Strength]</c> resolves to a single
-/// <c>movsx</c> at index 222 with no dictionary lookup. The whole table is
-/// flat <c>public const int</c> so every power is equally cheap; "high
-/// frequency" powers (Strength / Dexterity / Vulnerable / Weak / Poison /
-/// Thorns / RollingBoulder) are not special-cased — they're just regular
-/// entries in the alphabetic order.
+/// <c>SimPowerOps.TryGetPlayerAmount(blob, SimPowerType.Strength, out var amt)</c>
+/// resolves to a bit test plus a handful of POPCNT ops, no dictionary lookup.
+/// The whole table is flat <c>public const int</c> so every power is equally
+/// cheap to reference; "high frequency" powers (Strength / Dexterity /
+/// Vulnerable / Weak / Poison / Thorns / RollingBoulder) are not
+/// special-cased — they're just regular entries in the alphabetic order.
 ///
 /// Hand-maintained (not generated): if the game adds, removes, or renames a
 /// PowerModel subclass, this file AND <see cref="SimPowerRegistry"/> must be

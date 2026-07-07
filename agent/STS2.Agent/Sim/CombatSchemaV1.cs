@@ -20,6 +20,8 @@ internal static class CombatSchemaV1
     public static readonly int SimLocalCostModifierSize = Unsafe.SizeOf<SimLocalCostModifier>();
     public static readonly int SimTemporaryStarCostSize = Unsafe.SizeOf<SimTemporaryStarCost>();
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
+    public static readonly int SimPowerBitmapSize = Unsafe.SizeOf<SimPowerBitmap>();
+    public static readonly int SimPowerValuesSize = Unsafe.SizeOf<SimPowerValues>();
     public static readonly int SimEnemyMoveSMSize = Unsafe.SizeOf<SimEnemyMoveSM>();
     public static readonly int SimPetSize = Unsafe.SizeOf<SimPet>();
     public static readonly int SimHistoryCountersSize = Unsafe.SizeOf<SimHistoryCounters>();
@@ -64,6 +66,20 @@ internal static class CombatSchemaV1
                 "Power-internal layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
+        if (SimPowerBitmapSize != 40)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimPowerBitmap size 40, got {SimPowerBitmapSize}. " +
+                "Power bitmap layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (SimPowerValuesSize != 64)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimPowerValues size 64, got {SimPowerValuesSize}. " +
+                "Power values layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
         if (SimEnemyMoveSMSize != 25)
         {
             throw new InvalidOperationException(
@@ -92,10 +108,11 @@ internal static class CombatSchemaV1
                 "RNG buffer layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
-        if (Player.PlayerPowersBytes != Enemies.EnemyPowersBytes / Enemies.EnemyCap)
+        if (Player.PlayerPowerBitmapBytes != Enemies.EnemyPowerBitmapsBytes / Enemies.EnemyCap
+            || Player.PlayerPowerValuesBytes != Enemies.EnemyPowerValuesBytes / Enemies.EnemyCap)
         {
             throw new InvalidOperationException(
-                "CombatSchemaV1: player/enemy power row widths drifted apart. " +
+                "CombatSchemaV1: player/enemy power bitmap/values row widths drifted apart. " +
                 "Re-evaluate blob power offsets before proceeding.");
         }
     }
@@ -213,7 +230,8 @@ internal static class CombatSchemaV1
 
     public static class Player
     {
-        public static readonly int PlayerPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
+        public static readonly int PlayerPowerBitmapBytes = CombatSchemaV1.SimPowerBitmapSize;
+        public static readonly int PlayerPowerValuesBytes = CombatSchemaV1.SimPowerValuesSize;
         public static readonly int PlayerPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
         public static readonly int PlayerPotionsBytes = CombatSimLayout.PotionSlotCap * CombatSchemaV1.SimPotionSlotSize;
 
@@ -225,7 +243,8 @@ internal static class CombatSchemaV1
         public static readonly int EnergyOffset;
         public static readonly int MaxEnergyOffset;
         public static readonly int PlayerStarsOffset;
-        public static readonly int PlayerPowersOffset;
+        public static readonly int PlayerPowerBitmapOffset;
+        public static readonly int PlayerPowerValuesOffset;
         public static readonly int PlayerPowerInternalOffset;
         public static readonly int PlayerPotionSlotCountOffset;
         public static readonly int PlayerCanRemovePotionsOffset;
@@ -262,8 +281,11 @@ internal static class CombatSchemaV1
             PlayerStarsOffset = offset;
             offset += sizeof(ushort);
 
-            PlayerPowersOffset = offset;
-            offset += PlayerPowersBytes;
+            PlayerPowerBitmapOffset = offset;
+            offset += PlayerPowerBitmapBytes;
+
+            PlayerPowerValuesOffset = offset;
+            offset += PlayerPowerValuesBytes;
 
             PlayerPowerInternalOffset = offset;
             offset += PlayerPowerInternalBytes;
@@ -291,7 +313,8 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentDmgBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyIntentHitsBytes = EnemyCap * sizeof(byte);
         public static readonly int EnemyIntentBytes = EnemyCap * sizeof(byte);
-        public static readonly int EnemyPowersBytes = EnemyCap * CombatSimLayout.PowersPerCre * sizeof(short);
+        public static readonly int EnemyPowerBitmapsBytes = EnemyCap * CombatSchemaV1.SimPowerBitmapSize;
+        public static readonly int EnemyPowerValuesBytes = EnemyCap * CombatSchemaV1.SimPowerValuesSize;
         public static readonly int EnemyPowerInternalBytes = EnemyCap * CombatSchemaV1.SimPowerInternalSize;
         public static readonly int EnemyMoveSmBytes = EnemyCap * CombatSchemaV1.SimEnemyMoveSMSize;
         public static readonly int EnemyMoveTableHandleBytes = EnemyCap * sizeof(ushort);
@@ -303,7 +326,8 @@ internal static class CombatSchemaV1
         public static readonly int EnemyIntentDmgOffset;
         public static readonly int EnemyIntentHitsOffset;
         public static readonly int EnemyIntentOffset;
-        public static readonly int EnemyPowersOffset;
+        public static readonly int EnemyPowerBitmapsOffset;
+        public static readonly int EnemyPowerValuesOffset;
         public static readonly int EnemyPowerInternalOffset;
         public static readonly int EnemyMoveSmOffset;
         public static readonly int EnemyMoveTableHandleOffset;
@@ -338,8 +362,11 @@ internal static class CombatSchemaV1
 
             offset = AlignUp(offset, sizeof(short));
 
-            EnemyPowersOffset = offset;
-            offset += EnemyPowersBytes;
+            EnemyPowerBitmapsOffset = offset;
+            offset += EnemyPowerBitmapsBytes;
+
+            EnemyPowerValuesOffset = offset;
+            offset += EnemyPowerValuesBytes;
 
             EnemyPowerInternalOffset = offset;
             offset += EnemyPowerInternalBytes;
@@ -360,7 +387,8 @@ internal static class CombatSchemaV1
     {
         public static readonly int OrbSlotsBytes = 10 * sizeof(ushort);
         public static readonly int OstyBytes = CombatSchemaV1.SimPetSize;
-        public static readonly int OstyPowersBytes = CombatSimLayout.PowersPerCre * sizeof(short);
+        public static readonly int OstyPowerBitmapBytes = CombatSchemaV1.SimPowerBitmapSize;
+        public static readonly int OstyPowerValuesBytes = CombatSchemaV1.SimPowerValuesSize;
         public static readonly int OstyPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
         public static readonly int HistoryCountersBytes = CombatSchemaV1.SimHistoryCountersSize;
         public static readonly int HistoryCourseCardBytes = CombatSchemaV1.SimCardSize;
@@ -370,7 +398,8 @@ internal static class CombatSchemaV1
         public static readonly int OrbCountOffset;
         public static readonly int OrbCapacityOffset;
         public static readonly int OstyOffset;
-        public static readonly int OstyPowersOffset;
+        public static readonly int OstyPowerBitmapOffset;
+        public static readonly int OstyPowerValuesOffset;
         public static readonly int OstyPowerInternalOffset;
         public static readonly int HistoryCountersOffset;
         public static readonly int HistoryCourseCardOffset;
@@ -399,8 +428,11 @@ internal static class CombatSchemaV1
 
             offset = AlignUp(offset, sizeof(short));
 
-            OstyPowersOffset = offset;
-            offset += OstyPowersBytes;
+            OstyPowerBitmapOffset = offset;
+            offset += OstyPowerBitmapBytes;
+
+            OstyPowerValuesOffset = offset;
+            offset += OstyPowerValuesBytes;
 
             OstyPowerInternalOffset = offset;
             offset += OstyPowerInternalBytes;

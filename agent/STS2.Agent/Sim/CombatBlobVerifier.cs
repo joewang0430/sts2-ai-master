@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -50,6 +51,27 @@ internal static class CombatBlobVerifier
         ?? throw new InvalidOperationException("CombatBlobVerifier: CardModel._temporaryStarCosts field not found.");
 
     private static Dictionary<ushort, string>? s_cardNameById;
+
+    /// <summary>
+    /// When this mod DLL was last built (its file's last-write time on disk), shown next to
+    /// "ALL OK" so a stale/leftover build can't be mistaken for a fresh one — the DLL can only be
+    /// rebuilt while the game process (and thus the previously-loaded copy) isn't running, so this
+    /// timestamp is a reliable proxy for "which build is actually loaded right now".
+    /// </summary>
+    private static readonly string s_buildStamp = ComputeBuildStamp();
+
+    private static string ComputeBuildStamp()
+    {
+        try
+        {
+            string path = Assembly.GetExecutingAssembly().Location;
+            return File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm:ss");
+        }
+        catch
+        {
+            return "unknown";
+        }
+    }
 
     public static CombatBlobVerificationReport BuildSnapshotReport(CombatState state)
     {
@@ -167,7 +189,7 @@ internal static class CombatBlobVerifier
             DiffHistoryCourseCard(sim, state, me, ref simAllOk);
         }
 
-        DiffPowers(sim, "P.Pwr", pc.Powers, SimPowerOps.GetPlayerRow(s_blob), ref simAllOk);
+        DiffPowers(sim, "P.Pwr", pc.Powers, s_blob.PlayerPowerBitmap, s_blob.PlayerPowerValues, ref simAllOk);
         DiffValue(sim, "P.PwrI", s_blob.PlayerPowerInternal, ReadLivePowerInternal(pc.Powers), ref simAllOk);
 
         int simEnemyCount = s_blob.EnemyCount;
@@ -182,7 +204,7 @@ internal static class CombatBlobVerifier
 
             DiffIntent(sim, i, e, ref simAllOk);
 
-            DiffPowers(sim, $"E{i}.Pwr", e.Powers, SimPowerOps.GetEnemyRow(s_blob, i), ref simAllOk);
+            DiffPowers(sim, $"E{i}.Pwr", e.Powers, s_blob.EnemyPowerBitmaps[i], SimPowerOps.GetEnemyValues(s_blob, i), ref simAllOk);
             DiffValue(sim, $"E{i}.PwrI", s_blob.EnemyPowerInternal[i], ReadLivePowerInternal(e.Powers), ref simAllOk);
 
             CaptureLiveMoveSm(e, out SimEnemyMoveSM liveMoveSm, out ushort liveMoveTableHandle);
@@ -213,7 +235,7 @@ internal static class CombatBlobVerifier
         sb.AppendLine();
         sb.AppendLine(section.Title);
         if (section.AllOk)
-            sb.AppendLine("✓ ALL OK");
+            sb.AppendLine($"✓ ALL OK [build {s_buildStamp}]");
 
         string? pending = null;
 
@@ -458,7 +480,7 @@ internal static class CombatBlobVerifier
         }
 
         DiffValue(section, "Osty", s_blob.Osty, liveOsty, ref allOk);
-        DiffPowers(section, "Osty.Pwr", livePowers, s_blob.OstyPowers, ref allOk);
+        DiffPowers(section, "Osty.Pwr", livePowers, s_blob.OstyPowerBitmap, s_blob.OstyPowerValues, ref allOk);
         DiffValue(section, "Osty.PwrI", s_blob.OstyPowerInternal, ReadLivePowerInternal(livePowers), ref allOk);
     }
 
@@ -1032,12 +1054,13 @@ internal static class CombatBlobVerifier
 
     private static void DiffPowers(
         CombatBlobVerificationSection section, string tag,
-        IReadOnlyList<PowerModel> live, ReadOnlySpan<short> simRow,
+        IReadOnlyList<PowerModel> live, in SimPowerBitmap bitmap, ReadOnlySpan<short> values,
         ref bool allOk)
     {
         int diffs = 0;
         var msgs = new StringBuilder(64);
         int liveCount = live.Count;
+        int liveMatched = 0;
         for (int i = 0; i < liveCount; i++)
         {
             PowerModel p = live[i];
@@ -1048,41 +1071,30 @@ internal static class CombatBlobVerifier
                 if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}: unregistered {t.Name}");
                 continue;
             }
-            short simAmt = simRow[idx];
+            liveMatched++;
+            bool found = SimPowerSet.TryGetAmount(bitmap, values, idx, out short simAmt);
             int liveAmt = p.Amount;
-            if (simAmt != liveAmt)
+            if (!found || simAmt != liveAmt)
             {
                 diffs++;
-                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}.{t.Name}: sim={simAmt} live={liveAmt}");
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}.{t.Name}: sim={(found ? simAmt : 0)} live={liveAmt}");
             }
         }
 
-        for (int idx = 0; idx < CombatSimLayout.PowersPerCre; idx++)
+        // Bit-count vs matched-live-power-count catches phantom bits (bitmap set for a power the
+        // live creature no longer has) without a 261-slot dense scan — a mismatch here means some
+        // bit is set that no live power resolved to, since every live power that DID resolve was
+        // already checked for a matching bit above.
+        int bitmapCount = SimPowerSet.Count(bitmap);
+        if (bitmapCount != liveMatched)
         {
-            short simAmt = simRow[idx];
-            if (simAmt == 0) continue;
-            bool found = false;
-            for (int i = 0; i < liveCount; i++)
-            {
-                if (SimPowerRegistry.TryGetIndex(live[i].GetType(), out int liveIdx) && liveIdx == idx)
-                {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-            {
-                diffs++;
-                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}: phantom slot[{idx}]={simAmt}");
-            }
+            diffs++;
+            msgs.AppendLine($"  ✗ {tag}: bitmap has {bitmapCount} bit(s) set but {liveMatched} live power(s) matched.");
         }
 
         if (diffs == 0)
         {
-            int activeCount = 0;
-            for (int i = 0; i < liveCount; i++)
-                if (SimPowerRegistry.TryGetIndex(live[i].GetType(), out _)) activeCount++;
-            AddData(section, $"✓ {tag}({activeCount})");
+            AddData(section, $"✓ {tag}({liveMatched})");
         }
         else
         {

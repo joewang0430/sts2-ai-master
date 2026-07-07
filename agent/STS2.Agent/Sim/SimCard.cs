@@ -37,7 +37,7 @@ namespace STS2.Agent.Sim;
 ///   <item>Adds a stable per-card identity so future variable-size sidecar state
 ///         (energy-cost modifiers, enchantment residual counters, etc.) can move
 ///         with the card instead of being keyed by pile index.</item>
-///   <item>4 piles × (10 + 200 + 200 + 200) × 13 B = 7930 B per snapshot — still
+///   <item>4 piles × (10 + 100 + 100 + 100) × 13 B = 4030 B per snapshot — still
 ///         within a modest slice of L1d/L2 budget.</item>
 ///   <item>Default-state cards (no star cost, no replay, no flags, no
 ///         enchantment, no affliction) compress to <c>{ CardId, -1, 0, 0, 0, 0, 0, 0, 0 }</c> i.e.

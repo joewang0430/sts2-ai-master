@@ -40,14 +40,15 @@ internal sealed class CombatNodeBlob
     public Span<ushort> EnemyIntentDmg => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyIntentDmgOffset, CombatSchemaV1.Enemies.EnemyIntentDmgBytes);
     public Span<byte> EnemyIntentHits => CastSlice<byte>(CombatSchemaV1.Enemies.EnemyIntentHitsOffset, CombatSchemaV1.Enemies.EnemyIntentHitsBytes);
     public Span<byte> EnemyIntent => CastSlice<byte>(CombatSchemaV1.Enemies.EnemyIntentOffset, CombatSchemaV1.Enemies.EnemyIntentBytes);
-    public Span<short> EnemyPowers => CastSlice<short>(CombatSchemaV1.Enemies.EnemyPowersOffset, CombatSchemaV1.Enemies.EnemyPowersBytes);
+    public Span<SimPowerBitmap> EnemyPowerBitmaps => CastSlice<SimPowerBitmap>(CombatSchemaV1.Enemies.EnemyPowerBitmapsOffset, CombatSchemaV1.Enemies.EnemyPowerBitmapsBytes);
+    public Span<short> EnemyPowerValues => CastSlice<short>(CombatSchemaV1.Enemies.EnemyPowerValuesOffset, CombatSchemaV1.Enemies.EnemyPowerValuesBytes);
     public Span<SimPowerInternal> EnemyPowerInternal => CastSlice<SimPowerInternal>(CombatSchemaV1.Enemies.EnemyPowerInternalOffset, CombatSchemaV1.Enemies.EnemyPowerInternalBytes);
     public Span<SimEnemyMoveSM> EnemyMoveSM => CastSlice<SimEnemyMoveSM>(CombatSchemaV1.Enemies.EnemyMoveSmOffset, CombatSchemaV1.Enemies.EnemyMoveSmBytes);
     public Span<ushort> EnemyMoveTableHandles => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyMoveTableHandleOffset, CombatSchemaV1.Enemies.EnemyMoveTableHandleBytes);
     public Span<SimPotionSlot> PlayerPotions => CastSlice<SimPotionSlot>(CombatSchemaV1.Player.PlayerPotionsOffset, CombatSchemaV1.Player.PlayerPotionsBytes);
-    public Span<short> PlayerPowers => CastSlice<short>(CombatSchemaV1.Player.PlayerPowersOffset, CombatSchemaV1.Player.PlayerPowersBytes);
+    public Span<short> PlayerPowerValues => CastSlice<short>(CombatSchemaV1.Player.PlayerPowerValuesOffset, CombatSchemaV1.Player.PlayerPowerValuesBytes);
     public Span<ushort> OrbSlots => CastSlice<ushort>(CombatSchemaV1.Runtime.OrbSlotsOffset, CombatSchemaV1.Runtime.OrbSlotsBytes);
-    public Span<short> OstyPowers => CastSlice<short>(CombatSchemaV1.Runtime.OstyPowersOffset, CombatSchemaV1.Runtime.OstyPowersBytes);
+    public Span<short> OstyPowerValues => CastSlice<short>(CombatSchemaV1.Runtime.OstyPowerValuesOffset, CombatSchemaV1.Runtime.OstyPowerValuesBytes);
     public Span<RandomState> RngStates => CastSlice<RandomState>(CombatSchemaV1.Runtime.RngOffset, CombatSchemaV1.Runtime.RngBytes);
 
     public ref ushort HandCount => ref RefAt<ushort>(CombatSchemaV1.Cards.HandCountOffset);
@@ -66,6 +67,7 @@ internal sealed class CombatNodeBlob
     public ref ushort Energy => ref RefAt<ushort>(CombatSchemaV1.Player.EnergyOffset);
     public ref ushort MaxEnergy => ref RefAt<ushort>(CombatSchemaV1.Player.MaxEnergyOffset);
     public ref ushort PlayerStars => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerStarsOffset);
+    public ref SimPowerBitmap PlayerPowerBitmap => ref RefAt<SimPowerBitmap>(CombatSchemaV1.Player.PlayerPowerBitmapOffset);
     public ref SimPowerInternal PlayerPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Player.PlayerPowerInternalOffset);
     public ref byte PlayerPotionSlotCount => ref RefAt<byte>(CombatSchemaV1.Player.PlayerPotionSlotCountOffset);
     public ref byte PlayerCanRemovePotions => ref RefAt<byte>(CombatSchemaV1.Player.PlayerCanRemovePotionsOffset);
@@ -73,13 +75,10 @@ internal sealed class CombatNodeBlob
     public ref byte OrbCount => ref RefAt<byte>(CombatSchemaV1.Runtime.OrbCountOffset);
     public ref byte OrbCapacity => ref RefAt<byte>(CombatSchemaV1.Runtime.OrbCapacityOffset);
     public ref SimPet Osty => ref RefAt<SimPet>(CombatSchemaV1.Runtime.OstyOffset);
+    public ref SimPowerBitmap OstyPowerBitmap => ref RefAt<SimPowerBitmap>(CombatSchemaV1.Runtime.OstyPowerBitmapOffset);
     public ref SimPowerInternal OstyPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Runtime.OstyPowerInternalOffset);
     public ref SimHistoryCounters HistoryCounters => ref RefAt<SimHistoryCounters>(CombatSchemaV1.Runtime.HistoryCountersOffset);
     public ref SimCard HistoryCourseCard => ref RefAt<SimCard>(CombatSchemaV1.Runtime.HistoryCourseCardOffset);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ref short EnemyPower(int idx, int type)
-        => ref EnemyPowers[(idx * CombatSimLayout.PowersPerCre) + type];
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ref RandomState Rng(SimRngSlot slot)

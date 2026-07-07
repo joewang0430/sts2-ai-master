@@ -5,16 +5,19 @@ namespace STS2.Agent.Sim;
 
 /// <summary>
 /// Per-creature mirror of the private mutable counters that ~12 PowerModel
-/// subclasses keep beyond their public <c>Amount</c>. The base power matrices
-/// (<c>PlayerPowers</c> / <c>EnemyPowers</c> / <c>OstyPowers</c>) only store
-/// <c>Amount</c>; this struct captures the
-/// extra hidden state that gates each power's trigger condition.
+/// subclasses keep beyond their public <c>Amount</c>. The base per-creature
+/// power storage (<see cref="SimPowerSet"/> — a <see cref="SimPowerBitmap"/>
+/// paired with a <see cref="SimPowerValues"/> list) only stores <c>Amount</c>;
+/// this struct captures the extra hidden state that gates each power's
+/// trigger condition.
 ///
-/// Why a sparse named struct instead of a parallel <c>short[259]</c> matrix:
-/// only ~12 powers carry hidden state, of 259 total. A parallel matrix
-/// would burn 259×2 B = 518 B per creature × 8 creatures = 4144 B, of which
-/// 97% is permanently zero. This packed layout is 14 B × 8 = 112 B — a 37×
-/// reduction in memory bandwidth on every <c>CopyFrom</c> during DFS.
+/// Why a sparse named struct instead of a parallel <c>short[261]</c> matrix:
+/// only ~12 powers carry hidden state, of 261 total. A parallel matrix
+/// would burn 261×2 B = 522 B per creature × 8 creatures = 4176 B, of which
+/// 97%+ is permanently zero — the same reasoning <see cref="SimPowerSet"/>
+/// now also applies to the base <c>Amount</c> storage itself. This packed
+/// layout is 14 B × 8 = 112 B — a 37× reduction in memory bandwidth on every
+/// <c>CopyFrom</c> during DFS.
 ///
 /// Layout convention:
 ///   • Per-turn-reset fields first (cleared at SideTurnStart by the sim

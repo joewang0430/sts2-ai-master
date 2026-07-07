@@ -85,8 +85,9 @@ internal static class SimCaps
         }
 
         // ── 4. Every concrete PowerModel must be registered in SimPowerRegistry.
-        //    EnemyPowers / PlayerPowers are dense short[259] arrays; an unknown
-        //    power type would have nowhere to land during snapshot.
+        //    Each creature's powers are stored as a SimPowerSet (bitmap + values
+        //    list, see SimPowerSet.cs); an unknown power type would have no
+        //    dense-index bit to set during snapshot.
         //    Mock* powers under *.Powers.Mocks are unit-test fixtures registered
         //    into ModelDb but never instantiated in real combat — skip them.
         List<string>? missing = null;

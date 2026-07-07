@@ -4,26 +4,26 @@ using System.Runtime.CompilerServices;
 namespace STS2.Agent.Sim;
 
 /// <summary>
-/// Shared accessors for the dense per-creature power slices stored in the
-/// frozen <see cref="CombatNodeBlob"/>.
+/// Shared accessors for the sparse per-creature power bitmap+values pairs stored in the
+/// frozen <see cref="CombatNodeBlob"/>. See <see cref="SimPowerSet"/> for the lookup scheme.
 /// </summary>
 internal static class SimPowerOps
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static ref short GetPlayerAmount(CombatNodeBlob blob, int type)
-        => ref blob.PlayerPowers[type];
+    public static bool TryGetPlayerAmount(CombatNodeBlob blob, int type, out short amount)
+        => SimPowerSet.TryGetAmount(blob.PlayerPowerBitmap, blob.PlayerPowerValues, type, out amount);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static ref short GetEnemyAmount(CombatNodeBlob blob, int idx, int type)
-        => ref blob.EnemyPower(idx, type);
+    public static bool TryGetEnemyAmount(CombatNodeBlob blob, int idx, int type, out short amount)
+        => SimPowerSet.TryGetAmount(blob.EnemyPowerBitmaps[idx], GetEnemyValues(blob, idx), type, out amount);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Span<short> GetPlayerRow(CombatNodeBlob blob)
-        => blob.PlayerPowers;
+    public static bool TryGetOstyAmount(CombatNodeBlob blob, int type, out short amount)
+        => SimPowerSet.TryGetAmount(blob.OstyPowerBitmap, blob.OstyPowerValues, type, out amount);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Span<short> GetEnemyRow(CombatNodeBlob blob, int idx)
-        => blob.EnemyPowers.Slice(idx * CombatSimLayout.PowersPerCre, CombatSimLayout.PowersPerCre);
+    public static Span<short> GetEnemyValues(CombatNodeBlob blob, int idx)
+        => blob.EnemyPowerValues.Slice(idx * SimPowerSet.ValueCap, SimPowerSet.ValueCap);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static ref SimPowerInternal GetPlayerInternal(CombatNodeBlob blob)

@@ -11,9 +11,9 @@ internal static class CombatSimLayout
     public const int EnemyCap = 6;
     public const int PotionSlotCap = 10;
     public static readonly int HandCap = CardPile.MaxCardsInHand;
-    public const int PileCap = 200;
+    public const int PileCap = 100;
     public static readonly int CardInstanceCap = HandCap + (PileCap * 3) + 1;
-    public const int CardEnergyModifierCap = 2048 + 32;
-    public const int CardTemporaryStarCostCap = 2048;
-    public const int PowersPerCre = SimPowerType.Count;
+    public const int CardEnergyModifierCap = 256;
+    public const int CardTemporaryStarCostCap = 256;
+    public const int PowerValueCap = 32;
 }

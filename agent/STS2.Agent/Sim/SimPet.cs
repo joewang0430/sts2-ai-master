@@ -15,10 +15,10 @@ namespace STS2.Agent.Sim;
 ///   • Co-locates the four hot fields in 8 bytes — one quarter of a cache line.
 ///   • Lets the blob snapshot/copy path memcpy the whole struct in one
 ///     instruction instead of four individual loads/stores.
-///   • Powers are stored separately as a flat <c>short[259]</c>
-///     (<c>OstyPowers</c>) using the same row layout
-///     as the Player and Enemy power vectors so a single hook-dispatch helper
-///     can address any creature uniformly.
+///   • Powers are stored separately as a <see cref="SimPowerSet"/> bitmap+values
+///     pair (<c>OstyPowerBitmap</c> / <c>OstyPowerValues</c>) using the same
+///     scheme as the Player and Enemy power sets so a single lookup helper
+///     (<see cref="SimPowerOps"/>) can address any creature uniformly.
 ///
 /// Persistence:
 ///   • Within combat: persists across turns; HP carries over until 0.
