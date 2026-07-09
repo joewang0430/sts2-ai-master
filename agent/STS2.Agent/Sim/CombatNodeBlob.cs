@@ -14,11 +14,22 @@ internal sealed class CombatNodeBlob
 {
     private readonly byte[] _bytes = GC.AllocateUninitializedArray<byte>(CombatSchemaV1.TotalBytes);
 
+    /// <summary>
+    /// Combat-constant relic identity, shared by reference (not byte-copied) across every node
+    /// cloned from the same combat root — see <see cref="CombatRootRelics"/> for why this is safe.
+    /// Null until the first <see cref="CombatNodeBlobSnapshot.WriteV1FromCombatState"/> call.
+    /// </summary>
+    public CombatRootRelics? Relics { get; set; }
+
     public int ByteLength => _bytes.Length;
 
     public void Clear() => _bytes.AsSpan().Clear();
 
-    public void CopyFrom(CombatNodeBlob src) => src._bytes.AsSpan().CopyTo(_bytes);
+    public void CopyFrom(CombatNodeBlob src)
+    {
+        src._bytes.AsSpan().CopyTo(_bytes);
+        Relics = src.Relics;
+    }
 
     public Span<SimCard> HandCards => CastSlice<SimCard>(CombatSchemaV1.Cards.HandOffset, CombatSchemaV1.Cards.HandBytes);
     public Span<SimCard> DrawCards => CastSlice<SimCard>(CombatSchemaV1.Cards.DrawOffset, CombatSchemaV1.Cards.DrawBytes);
@@ -45,8 +56,10 @@ internal sealed class CombatNodeBlob
     public Span<SimPowerInternal> EnemyPowerInternal => CastSlice<SimPowerInternal>(CombatSchemaV1.Enemies.EnemyPowerInternalOffset, CombatSchemaV1.Enemies.EnemyPowerInternalBytes);
     public Span<SimEnemyMoveSM> EnemyMoveSM => CastSlice<SimEnemyMoveSM>(CombatSchemaV1.Enemies.EnemyMoveSmOffset, CombatSchemaV1.Enemies.EnemyMoveSmBytes);
     public Span<ushort> EnemyMoveTableHandles => CastSlice<ushort>(CombatSchemaV1.Enemies.EnemyMoveTableHandleOffset, CombatSchemaV1.Enemies.EnemyMoveTableHandleBytes);
+    public Span<SimMoveEffect> EnemyMoveEffects => CastSlice<SimMoveEffect>(CombatSchemaV1.Enemies.EnemyMoveEffectsOffset, CombatSchemaV1.Enemies.EnemyMoveEffectsBytes);
     public Span<SimPotionSlot> PlayerPotions => CastSlice<SimPotionSlot>(CombatSchemaV1.Player.PlayerPotionsOffset, CombatSchemaV1.Player.PlayerPotionsBytes);
     public Span<short> PlayerPowerValues => CastSlice<short>(CombatSchemaV1.Player.PlayerPowerValuesOffset, CombatSchemaV1.Player.PlayerPowerValuesBytes);
+    public Span<byte> RelicCounters => CastSlice<byte>(CombatSchemaV1.Player.PlayerRelicCountersOffset, CombatSchemaV1.Player.PlayerRelicCountersBytes);
     public Span<ushort> OrbSlots => CastSlice<ushort>(CombatSchemaV1.Runtime.OrbSlotsOffset, CombatSchemaV1.Runtime.OrbSlotsBytes);
     public Span<short> OstyPowerValues => CastSlice<short>(CombatSchemaV1.Runtime.OstyPowerValuesOffset, CombatSchemaV1.Runtime.OstyPowerValuesBytes);
     public Span<RandomState> RngStates => CastSlice<RandomState>(CombatSchemaV1.Runtime.RngOffset, CombatSchemaV1.Runtime.RngBytes);
@@ -67,6 +80,7 @@ internal sealed class CombatNodeBlob
     public ref ushort Energy => ref RefAt<ushort>(CombatSchemaV1.Player.EnergyOffset);
     public ref ushort MaxEnergy => ref RefAt<ushort>(CombatSchemaV1.Player.MaxEnergyOffset);
     public ref ushort PlayerStars => ref RefAt<ushort>(CombatSchemaV1.Player.PlayerStarsOffset);
+    public ref ushort AscensionFlags => ref RefAt<ushort>(CombatSchemaV1.Player.AscensionFlagsOffset);
     public ref SimPowerBitmap PlayerPowerBitmap => ref RefAt<SimPowerBitmap>(CombatSchemaV1.Player.PlayerPowerBitmapOffset);
     public ref SimPowerInternal PlayerPowerInternal => ref RefAt<SimPowerInternal>(CombatSchemaV1.Player.PlayerPowerInternalOffset);
     public ref byte PlayerPotionSlotCount => ref RefAt<byte>(CombatSchemaV1.Player.PlayerPotionSlotCountOffset);

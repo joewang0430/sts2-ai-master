@@ -35,9 +35,9 @@ namespace STS2.Agent.Sim;
 ///       <item><c>cooldown N</c> with N ≤ 16 — same window, filtered to <c>IsMove</c> states.</item>
 ///     </list>
 ///     The full <c>List&lt;MonsterState&gt;</c> contains older entries but no
-///     game-source rule reads beyond the last few. <see cref="SimCaps"/> Check 9
-///     enforces this assumption: any monster declaring <c>cooldown &gt; 16</c> or
-///     <c>maxTimes &gt; 16</c> trips the assert at startup.</item>
+///     game-source rule reads beyond the last few. <c>MonsterStateTable.VerifyHistoryCaps</c>
+///     (force-triggered by <see cref="SimCaps"/> Check 13) enforces this assumption: any monster
+///     declaring <c>cooldown &gt; 16</c> or <c>maxTimes &gt; 16</c> trips the assert at startup.</item>
 ///   <item><b>IllusionFollowUpIdx</b> + flag — when Illusion power triggers, the
 ///     monster's next state is forced to this id (skipping the random roll).
 ///     Stored here rather than on <see cref="SimPowerInternal"/> because the

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -15,6 +15,10 @@ namespace STS2.Agent.Sim;
 ///
 /// If the game adds, removes, or renames a CardModel subclass, this dictionary fails
 /// to compile (broken <c>typeof()</c>) -- the canary breakage we want.
+///
+/// Two entries (<c>Buffer</c>, <c>Void</c>) need a fully-qualified <c>typeof()</c>: their bare
+/// names collide with <c>System.Buffer</c> and the <c>void</c> keyword's type respectively, given
+/// this file's <c>using System;</c> + <c>using MegaCrit.Sts2.Core.Models.Cards;</c> combination.
 /// </summary>
 internal static class SimCardDb
 {
@@ -85,7 +89,7 @@ internal static class SimCardDb
             { typeof(Breakthrough), SimCardId.Breakthrough },
             { typeof(BrightestFlame), SimCardId.BrightestFlame },
             { typeof(BubbleBubble), SimCardId.BubbleBubble },
-            { typeof(MegaCrit.Sts2.Core.Models.Cards.Buffer), SimCardId.Buffer },
+            { typeof(MegaCrit.Sts2.Core.Models.Cards.Buffer), SimCardId.Buffer }, // fully qualified: ambiguous with System.Buffer
             { typeof(BulkUp), SimCardId.BulkUp },
             { typeof(BulletTime), SimCardId.BulletTime },
             { typeof(Bully), SimCardId.Bully },
@@ -452,6 +456,7 @@ internal static class SimCardDb
             { typeof(Rupture), SimCardId.Rupture },
             { typeof(Sacrifice), SimCardId.Sacrifice },
             { typeof(Salvo), SimCardId.Salvo },
+            { typeof(Scare), SimCardId.Scare },
             { typeof(Scavenge), SimCardId.Scavenge },
             { typeof(Scourge), SimCardId.Scourge },
             { typeof(Scrape), SimCardId.Scrape },
@@ -582,7 +587,7 @@ internal static class SimCardDb
             { typeof(Veilpiercer), SimCardId.Veilpiercer },
             { typeof(Venerate), SimCardId.Venerate },
             { typeof(Vicious), SimCardId.Vicious },
-            { typeof(MegaCrit.Sts2.Core.Models.Cards.Void), SimCardId.Void },
+            { typeof(MegaCrit.Sts2.Core.Models.Cards.Void), SimCardId.Void }, // fully qualified: ambiguous with System.Void (keyword)
             { typeof(VoidForm), SimCardId.VoidForm },
             { typeof(Volley), SimCardId.Volley },
             { typeof(Voltaic), SimCardId.Voltaic },
@@ -593,6 +598,7 @@ internal static class SimCardDb
             { typeof(WhiteNoise), SimCardId.WhiteNoise },
             { typeof(Wish), SimCardId.Wish },
             { typeof(Wisp), SimCardId.Wisp },
+            { typeof(Wither), SimCardId.Wither },
             { typeof(Wound), SimCardId.Wound },
             { typeof(WraithForm), SimCardId.WraithForm },
             { typeof(Writhe), SimCardId.Writhe },
@@ -619,4 +625,3 @@ internal static class SimCardDb
                 $"SimCardDb: unknown CardModel subclass '{cardType.FullName}'. " +
                 "Add it to SimCardId and SimCardDb.");
 }
-

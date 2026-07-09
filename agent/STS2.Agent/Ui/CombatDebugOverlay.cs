@@ -321,6 +321,7 @@ internal static class CombatDebugOverlay
         _potionApprovedLabel = null;
         _potionLayer         = null;
         CombatPotionApprovalState.Clear();
+        SimMoveEffectVerifier.Clear();
         _potionButtons.Clear();
         _potionTitles.Clear();
         _liveFromLastRefresh   = null;
@@ -499,6 +500,7 @@ internal static class CombatDebugOverlay
         // ── Enemies ───────────────────────────────────────────────────────────
         sb.AppendLine("── ENEMIES ─────────────");
 
+        Span<SimMoveEffect> fx = stackalloc SimMoveEffect[CombatSimLayout.MoveEffectCap];
         foreach (Creature enemy in state.Enemies)
         {
             if (!enemy.IsAlive) continue;
@@ -520,20 +522,33 @@ internal static class CombatDebugOverlay
 
             if (enemy.Monster is { } mon)
             {
+                // Computed ONCE per enemy, unconditionally — not just when the CURRENT intent
+                // happens to be non-Attack. A move can telegraph Attack this round and still need
+                // Observe() called so a PRIOR round's prediction (e.g. a Buff move that already
+                // resolved and advanced the state machine to this Attack) gets checked. Mirrors
+                // CombatNodeBlobSnapshot.CaptureIntent, which also calls Write unconditionally
+                // before branching on intent type.
+                int fxCount = SimMonsterMoveEffects.Write(enemy, mon.NextMove, SimAscension.CaptureLive(), fx);
+                string verifyReport = SimMoveEffectVerifier.Observe(enemy, mon.NextMove.StateId, fx, fxCount);
+
                 foreach (AbstractIntent intent in mon.NextMove.Intents)
                 {
                     if (intent is AttackIntent atk)
                     {
-                        int    dmg     = (int)(atk.DamageCalc?.Invoke() ?? 0m);
-                        // Repeats=0 means "single hit"; Repeats=N means N+1 total hits.
-                        string repsStr = atk.Repeats > 0 ? $" ×{atk.Repeats + 1}" : string.Empty;
+                        // GetSingleDamage (not raw DamageCalc()) so Strength/Weak/Vulnerable etc.
+                        // are included — DamageCalc alone is the pre-Hook base number.
+                        int    dmg     = atk.DamageCalc != null ? atk.GetSingleDamage(Array.Empty<Creature>(), enemy) : 0;
+                        // Repeats IS the total hit count already, not "extra repeats beyond the first".
+                        string repsStr = atk.Repeats > 1 ? $" ×{atk.Repeats}" : string.Empty;
                         sb.AppendLine($"  Intent: ATTACK {dmg}{repsStr}");
                     }
                     else
                     {
-                        sb.AppendLine($"  Intent: {intent.IntentType}");
+                        sb.AppendLine($"  Intent: {intent.IntentType}{FormatMoveEffects(fx, fxCount)}");
                     }
                 }
+
+                if (verifyReport.Length > 0) sb.Append(verifyReport);
             }
         }
 
@@ -708,6 +723,39 @@ internal static class CombatDebugOverlay
 
     /// <summary>Compact one-line label per card: "Strike" or "Strike[+]".</summary>
     private static string CardLabel(CardModel c) => c.IsUpgraded ? $"{c.Title}[+]" : c.Title;
+
+    /// <summary>Formats captured SimMoveEffect slots as e.g. " (Block 15)" or " (Strength +3)".
+    /// Empty string if no effects were captured for this monster/move yet — see
+    /// dev_docs/Enemy_Intent_Payload_Backlog.md for which monsters are done so far.</summary>
+    private static string FormatMoveEffects(ReadOnlySpan<SimMoveEffect> fx, int count)
+    {
+        if (count == 0) return string.Empty;
+
+        var sb = new StringBuilder(32);
+        sb.Append(" (");
+        for (int i = 0; i < count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            SimMoveEffect e = fx[i];
+            switch ((SimMoveEffectKind)e.Kind)
+            {
+                case SimMoveEffectKind.Block:
+                    sb.Append($"Block {e.Amount}");
+                    break;
+                case SimMoveEffectKind.PowerApply:
+                    sb.Append($"{SimPowerTypeNames.GetName(e.PowerType)} +{e.Amount}");
+                    break;
+                case SimMoveEffectKind.Heal:
+                    sb.Append($"Heal {e.Amount}");
+                    break;
+                case SimMoveEffectKind.Summon:
+                    sb.Append($"Summon {SimSummonTargetNames.GetName(e.PowerType)} x{e.Amount}");
+                    break;
+            }
+        }
+        sb.Append(')');
+        return sb.ToString();
+    }
 
     private static string BuildPredictionText(CombatState state)
     {

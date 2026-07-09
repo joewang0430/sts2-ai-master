@@ -140,6 +140,7 @@ internal static class CombatBlobVerifier
             Cmp("DiscN", simDiscCount, pcs.DiscardPile.Cards.Count);
             Cmp("ExhN", simExhaustCount, pcs.ExhaustPile.Cards.Count);
             DiffPotions(sim, me, ref simAllOk);
+            DiffRelics(sim, "P.Relic", me.Relics, s_blob.Relics, s_blob.RelicCounters, ref simAllOk);
             DiffHistoryCounters(sim, state, me, ref simAllOk);
             DiffOrbs(sim, pcs, ref simAllOk);
             DiffOsty(sim, pcs, ref simAllOk);
@@ -522,6 +523,82 @@ internal static class CombatBlobVerifier
         allOk = false;
         AddStandalone(section, $"✗ Potions: {diffs} mismatch(es), simN={simCount} liveN={liveSlots.Count}");
         AddBufferedStandaloneLines(section, firstMismatches);
+    }
+
+    private static void DiffRelics(
+        CombatBlobVerificationSection section, string tag,
+        IReadOnlyList<RelicModel> live, CombatRootRelics? relics, ReadOnlySpan<byte> counters,
+        ref bool allOk)
+    {
+        int diffs = 0;
+        var msgs = new StringBuilder(96);
+
+        int simCount = relics?.Count ?? 0;
+        int liveCount = live.Count;
+        if (simCount != liveCount)
+        {
+            diffs++;
+            msgs.AppendLine($"  ✗ {tag}: count sim={simCount} live={liveCount}");
+        }
+
+        int n = Math.Min(simCount, liveCount);
+        for (int i = 0; i < n; i++)
+        {
+            RelicModel r = live[i];
+            Type t = r.GetType();
+            if (!SimRelicDb.TryGetId(t, out ushort liveId))
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}[{i}]: unregistered {t.Name}");
+                continue;
+            }
+
+            ushort simId = relics!.Ids[i];
+            if (simId != liveId)
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}[{i}]: id sim={simId} live={liveId}({t.Name})");
+                continue;
+            }
+
+            byte simFlags = relics.Flags[i];
+            byte liveFlags = (byte)((r.IsWax ? CombatRootRelics.FlagIsWax : 0) | (r.IsMelted ? CombatRootRelics.FlagIsMelted : 0));
+            if (simFlags != liveFlags)
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}[{i}].{t.Name}: flags sim=0x{simFlags:X2} live=0x{liveFlags:X2}");
+            }
+
+            byte liveStack = (byte)Math.Clamp(r.StackCount, 0, 255);
+            if (relics.StackCounts[i] != liveStack)
+            {
+                diffs++;
+                if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}[{i}].{t.Name}: stack sim={relics.StackCounts[i]} live={liveStack}");
+            }
+
+            sbyte slot = relics.CounterSlot[i];
+            if (slot >= 0)
+            {
+                byte simAmt = counters[slot];
+                byte liveAmt = (byte)Math.Clamp(r.DisplayAmount, 0, 255);
+                if (simAmt != liveAmt)
+                {
+                    diffs++;
+                    if (diffs <= 3) msgs.AppendLine($"  ✗ {tag}[{i}].{t.Name}: counter sim={simAmt} live={liveAmt}");
+                }
+            }
+        }
+
+        if (diffs == 0)
+        {
+            AddData(section, $"✓ {tag}({simCount})");
+        }
+        else
+        {
+            allOk = false;
+            AddStandalone(section, $"✗ {tag}: {diffs} diff(s)");
+            AddBufferedStandaloneLines(section, msgs);
+        }
     }
 
     private static void DiffHistoryCounters(CombatBlobVerificationSection section, CombatState state, Player me, ref bool allOk)
@@ -1116,12 +1193,12 @@ internal static class CombatBlobVerifier
             {
                 case DeathBlowIntent dbi:
                     liveKind = SimIntent.DeathBlow;
-                    liveDmg = AttackDamageFor(dbi);
+                    liveDmg = AttackDamageFor(dbi, e);
                     liveHits = AttackHitsFor(dbi);
                     break;
                 case AttackIntent ai:
                     liveKind = SimIntent.Attack;
-                    liveDmg = AttackDamageFor(ai);
+                    liveDmg = AttackDamageFor(ai, e);
                     liveHits = AttackHitsFor(ai);
                     break;
                 case BuffIntent:
@@ -1180,19 +1257,24 @@ internal static class CombatBlobVerifier
         }
     }
 
-    private static ushort AttackDamageFor(AttackIntent ai)
+    /// <summary>GetSingleDamage (Hook.ModifyDamage-adjusted), not raw DamageCalc() — see the fix
+    /// note on CombatNodeBlobSnapshot.AttackDamage for why this changed 2026-07-08. This is the
+    /// "live" side of the diff, so it had the identical bug as the blob-writer side, which is why
+    /// this discrepancy never showed up as a ✗ before: both sides were wrong the same way.</summary>
+    private static ushort AttackDamageFor(AttackIntent ai, Creature enemy)
     {
-        var calc = ai.DamageCalc;
-        if (calc == null) return 0;
-        decimal raw = calc();
-        if (raw < 0m) return 0;
-        if (raw > 65535m) return 65535;
-        return (ushort)raw;
+        if (ai.DamageCalc == null) return 0;
+        int dmg = ai.GetSingleDamage(Array.Empty<Creature>(), enemy);
+        if (dmg < 0) return 0;
+        if (dmg > 65535) return 65535;
+        return (ushort)dmg;
     }
 
+    /// <summary>Repeats IS the total hit count already — see the fix note on
+    /// CombatNodeBlobSnapshot.AttackHits.</summary>
     private static byte AttackHitsFor(AttackIntent ai)
     {
-        int hits = ai.Repeats + 1;
+        int hits = ai.Repeats;
         if (hits < 1) hits = 1;
         if (hits > 255) hits = 255;
         return (byte)hits;

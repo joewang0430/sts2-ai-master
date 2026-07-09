@@ -158,7 +158,29 @@ internal static class SimCaps
                 ". Add typeof(...) → SimAfflictionType.Xxx entries and bump SimAfflictionType.Count.");
         }
 
-        // ── 7. Orb queue capacity must equal the blob's OrbSlots10
+        // ── 7. Every concrete RelicModel must be registered in SimRelicDb. Relic identity is
+        //    stored once per combat in CombatRootRelics (see SimPowerSet.cs-style design notes
+        //    there); an unregistered relic type would have no SimRelicId to resolve to during
+        //    snapshot. No Mocks namespace exists for relics (verified — nothing to skip).
+        List<string>? missingRelic = null;
+        foreach (RelicModel relic in ModelDb.AllRelics)
+        {
+            Type t = relic.GetType();
+            if (!SimRelicDb.TryGetId(t, out _))
+            {
+                missingRelic ??= new List<string>();
+                missingRelic.Add(t.FullName ?? t.Name);
+            }
+        }
+        if (missingRelic is { Count: > 0 })
+        {
+            throw new InvalidOperationException(
+                "SimCaps: RelicModel subclasses not registered in SimRelicDb: " +
+                string.Join(", ", missingRelic) +
+                ". Add typeof(...) → SimRelicId.Xxx entries and bump SimRelicId.Count.");
+        }
+
+        // ── 8. Orb queue capacity must equal the blob's OrbSlots10
         //    inline length (10). If the game ever raises maxCapacity, the
         //    snapshot loop would silently truncate the queue.
         if (OrbQueue.maxCapacity != 10)
@@ -169,7 +191,7 @@ internal static class SimCaps
                 "Update OrbSlots10 and rebuild.");
         }
 
-        // ── 8. Every concrete OrbModel subclass must be registered in
+        // ── 9. Every concrete OrbModel subclass must be registered in
         //    SimOrbRegistry. Snapshot reads orbs through the registry; an
         //    unknown subclass would land as SimOrbType.None (= empty),
         //    silently dropping the orb from the simulation.
@@ -202,7 +224,7 @@ internal static class SimCaps
                 ". Add typeof(...) → SimOrbType.Xxx entries and bump SimOrbType.Count.");
         }
 
-        // ── 8. Force-resolve every reflection FieldInfo in SimPowerInternalReader.
+        // ── 10. Force-resolve every reflection FieldInfo in SimPowerInternalReader.
         //    Each field handle is a `static readonly FieldInfo` initialized via
         //    typeof(T).GetField(...) ?? throw — so touching the type's static
         //    ctor verifies that all 13 hidden fields (FeralPower.Data.zeroCostAttacksPlayed,
@@ -222,7 +244,7 @@ internal static class SimCaps
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(SimPowerInternalReader).TypeHandle);
 
-        // ── 9. Force initialization of RandomStateOps. Its static field
+        // ── 11. Force initialization of RandomStateOps. Its static field
         //    chain resolves MegaRandom's private Xoshiro256** state fields
         //    (_s0/_s1/_s2/_s3) plus the game's Rng._random bridge. Blob snapshot
         //    uses this for all 8 combat RNG streams; if the game-side layout
@@ -230,7 +252,7 @@ internal static class SimCaps
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(RandomStateOps).TypeHandle);
 
-        // ── 10. Force initialization of CombatNodeBlobSnapshot so the
+        // ── 12. Force initialization of CombatNodeBlobSnapshot so the
         //    CardEnergyCost._localModifiers reflection handle is resolved up
         //    front. Blob snapshot depends on this exact field for card-energy
         //    sidecar capture; a rename should crash at startup, not only when
@@ -238,7 +260,7 @@ internal static class SimCaps
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(CombatNodeBlobSnapshot).TypeHandle);
 
-        // ── 11. Force initialization of SimMonsterStateRegistry. Its two
+        // ── 13. Force initialization of SimMonsterStateRegistry. Its two
         //    `static readonly FieldInfo` slots resolve
         //    MonsterMoveStateMachine._currentState and ._performedFirstMove
         //    via reflection with `?? throw`. Without an explicit nudge they
@@ -254,6 +276,13 @@ internal static class SimCaps
         //    instantiating every MonsterModel ourselves.
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
             typeof(SimMonsterStateRegistry).TypeHandle);
+
+        // ── 14. Force-build SimCardTargetTypeRegistry. Its lazy Build() throws if any live
+        //    CardModel is missing from SimCardDb (e.g. a newly-added card that compiles fine
+        //    but was never added to the hand-typed registry) — without this nudge that only
+        //    surfaces the first time some future caller queries a target type mid-combat.
+        //    SimCardId.Count is always > 0, so index 0 is a safe forcing call.
+        _ = SimCardTargetTypeRegistry.Get(0);
 
         // All invariants hold. (Worst-case encounter is informational only.)
         _ = worstEncounter; _ = worstSlots;

@@ -56,6 +56,7 @@ internal static class CombatNodeBlobSnapshot
         dst.MaxEnergy = ClampU16(pcs.MaxEnergy);
         dst.PlayerStars = ClampU16(pcs.Stars);
         SnapshotPotions(player, dst);
+        SnapshotRelics(player, dst);
 
         WritePowerSet(playerCreature.Powers, ref dst.PlayerPowerBitmap, dst.PlayerPowerValues, "player");
         SimPowerInternal playerPowerInternal = default;
@@ -93,6 +94,8 @@ internal static class CombatNodeBlobSnapshot
                 "Encounter exceeds capacity — SimCaps.Verify should have caught this at startup.");
         }
 
+        dst.AscensionFlags = SimAscension.CaptureLive();
+
         dst.EnemyCount = (byte)enemyN;
         for (int i = 0; i < enemyN; i++)
         {
@@ -108,7 +111,7 @@ internal static class CombatNodeBlobSnapshot
             dst.EnemyPowerInternal[i] = enemyPowerInternal;
 
             SnapshotMoveSM(enemy, ref dst.EnemyMoveSM[i], ref dst.EnemyMoveTableHandles[i]);
-            CaptureIntent(enemy, i, dst);
+            CaptureIntent(enemy, i, dst.AscensionFlags, dst);
         }
 
         var rngSet = combat.RunState.Rng;
@@ -197,6 +200,67 @@ internal static class CombatNodeBlobSnapshot
             bool allowAi = CombatPotionApprovalState.IsAllowed(player, i, potion);
             dst.PlayerPotions[i] = SimPotionSlot.From(potion, allowAi);
         }
+    }
+
+    /// <summary>
+    /// Builds this combat's <see cref="CombatRootRelics"/> (identity, wax/melted, stack counts —
+    /// none of which change during a single combat) and writes the small per-node counter array
+    /// (<see cref="CombatNodeBlob.RelicCounters"/>) for whichever held relics actually carry one
+    /// (see <see cref="SimRelicDb.HasCounter"/>).
+    /// </summary>
+    private static void SnapshotRelics(Player player, CombatNodeBlob dst)
+    {
+        IReadOnlyList<RelicModel> relics = player.Relics;
+        int count = relics.Count;
+        if (count > CombatSimLayout.RelicCap)
+        {
+            throw new InvalidOperationException(
+                $"CombatNodeBlobSnapshot: player has {count} relics > RelicCap={CombatSimLayout.RelicCap}. " +
+                "Raise CombatSimLayout.RelicCap.");
+        }
+
+        var ids = new ushort[count];
+        var flags = new byte[count];
+        var stackCounts = new byte[count];
+        var counterSlot = new sbyte[count];
+
+        Span<byte> counters = dst.RelicCounters;
+        counters.Clear();
+        int nextCounterSlot = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            RelicModel relic = relics[i];
+            ushort id = SimRelicDb.GetId(relic.GetType());
+            ids[i] = id;
+
+            byte f = 0;
+            if (relic.IsWax) f |= CombatRootRelics.FlagIsWax;
+            if (relic.IsMelted) f |= CombatRootRelics.FlagIsMelted;
+            flags[i] = f;
+
+            stackCounts[i] = ClampU8(relic.StackCount);
+
+            if (SimRelicDb.HasCounter(id))
+            {
+                if (nextCounterSlot >= CombatSimLayout.RelicCounterCap)
+                {
+                    throw new InvalidOperationException(
+                        $"CombatNodeBlobSnapshot: player has more than {CombatSimLayout.RelicCounterCap} " +
+                        "counter-bearing relics. Raise CombatSimLayout.RelicCounterCap.");
+                }
+
+                counterSlot[i] = (sbyte)nextCounterSlot;
+                counters[nextCounterSlot] = ClampU8(relic.DisplayAmount);
+                nextCounterSlot++;
+            }
+            else
+            {
+                counterSlot[i] = -1;
+            }
+        }
+
+        dst.Relics = new CombatRootRelics(count, ids, flags, stackCounts, counterSlot);
     }
 
     private static ushort SnapshotPile(
@@ -416,7 +480,7 @@ internal static class CombatNodeBlobSnapshot
         }
     }
 
-    private static void CaptureIntent(Creature enemy, int idx, CombatNodeBlob dst)
+    private static void CaptureIntent(Creature enemy, int idx, ushort ascensionFlags, CombatNodeBlob dst)
     {
         var move = enemy.Monster?.NextMove;
         if (move == null || move.Intents.Count == 0)
@@ -425,17 +489,20 @@ internal static class CombatNodeBlobSnapshot
             return;
         }
 
+        Span<SimMoveEffect> effectSlots = dst.EnemyMoveEffects.Slice(idx * CombatSimLayout.MoveEffectCap, CombatSimLayout.MoveEffectCap);
+        SimMonsterMoveEffects.Write(enemy, move, ascensionFlags, effectSlots);
+
         AbstractIntent first = move.Intents[0];
         switch (first)
         {
             case DeathBlowIntent dbi:
                 dst.EnemyIntent[idx] = (byte)SimIntent.DeathBlow;
-                dst.EnemyIntentDmg[idx] = AttackDamage(dbi);
+                dst.EnemyIntentDmg[idx] = AttackDamage(dbi, enemy);
                 dst.EnemyIntentHits[idx] = AttackHits(dbi);
                 break;
             case AttackIntent ai:
                 dst.EnemyIntent[idx] = (byte)SimIntent.Attack;
-                dst.EnemyIntentDmg[idx] = AttackDamage(ai);
+                dst.EnemyIntentDmg[idx] = AttackDamage(ai, enemy);
                 dst.EnemyIntentHits[idx] = AttackHits(ai);
                 break;
             case BuffIntent:
@@ -542,19 +609,31 @@ internal static class CombatNodeBlobSnapshot
         }
     }
 
-    private static ushort AttackDamage(AttackIntent intent)
+    /// <summary>
+    /// Per-hit damage INCLUDING Strength/Weak/Vulnerable etc. (via AttackIntent.GetSingleDamage,
+    /// which runs Hook.ModifyDamage) — NOT the raw DamageCalc() value. Was reading raw DamageCalc
+    /// before this fix, silently dropping every damage modifier from the blob (caught 2026-07-08
+    /// via a live discrepancy: blob showed "13", the game's own intent icon showed "23" once the
+    /// enemy had 10 Strength — 13 + 10 = 23, confirming raw DamageCalc was missing the buff).
+    /// </summary>
+    private static ushort AttackDamage(AttackIntent intent, Creature enemy)
     {
-        var calc = intent.DamageCalc;
-        if (calc == null) return 0;
-        decimal raw = calc();
-        if (raw < 0m) return 0;
-        if (raw > 65535m) return 65535;
-        return (ushort)raw;
+        if (intent.DamageCalc == null) return 0;
+        int dmg = intent.GetSingleDamage(Array.Empty<Creature>(), enemy);
+        if (dmg < 0) return 0;
+        if (dmg > 65535) return 65535;
+        return (ushort)dmg;
     }
 
+    /// <summary>
+    /// <c>AttackIntent.Repeats</c> IS the total hit count already (SingleAttackIntent.Repeats == 1,
+    /// MultiAttackIntent's constructor takes the hit count directly as <c>repeat</c>) — it is NOT
+    /// "extra repeats beyond the first". The old <c>Repeats + 1</c> here over-counted every attack
+    /// by one hit (a plain single-hit attack read as 2 hits). Fixed alongside <see cref="AttackDamage"/>.
+    /// </summary>
     private static byte AttackHits(AttackIntent intent)
     {
-        int hits = intent.Repeats + 1;
+        int hits = intent.Repeats;
         if (hits < 1) hits = 1;
         if (hits > 255) hits = 255;
         return (byte)hits;

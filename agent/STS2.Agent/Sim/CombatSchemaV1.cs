@@ -22,6 +22,7 @@ internal static class CombatSchemaV1
     public static readonly int SimPowerInternalSize = Unsafe.SizeOf<SimPowerInternal>();
     public static readonly int SimPowerBitmapSize = Unsafe.SizeOf<SimPowerBitmap>();
     public static readonly int SimPowerValuesSize = Unsafe.SizeOf<SimPowerValues>();
+    public static readonly int SimMoveEffectSize = Unsafe.SizeOf<SimMoveEffect>();
     public static readonly int SimEnemyMoveSMSize = Unsafe.SizeOf<SimEnemyMoveSM>();
     public static readonly int SimPetSize = Unsafe.SizeOf<SimPet>();
     public static readonly int SimHistoryCountersSize = Unsafe.SizeOf<SimHistoryCounters>();
@@ -78,6 +79,13 @@ internal static class CombatSchemaV1
             throw new InvalidOperationException(
                 $"CombatSchemaV1: expected SimPowerValues size 64, got {SimPowerValuesSize}. " +
                 "Power values layout drifted; re-evaluate blob offsets before proceeding.");
+        }
+
+        if (SimMoveEffectSize != 5)
+        {
+            throw new InvalidOperationException(
+                $"CombatSchemaV1: expected SimMoveEffect size 5, got {SimMoveEffectSize}. " +
+                "Move-effect layout drifted; re-evaluate blob offsets before proceeding.");
         }
 
         if (SimEnemyMoveSMSize != 25)
@@ -234,6 +242,7 @@ internal static class CombatSchemaV1
         public static readonly int PlayerPowerValuesBytes = CombatSchemaV1.SimPowerValuesSize;
         public static readonly int PlayerPowerInternalBytes = CombatSchemaV1.SimPowerInternalSize;
         public static readonly int PlayerPotionsBytes = CombatSimLayout.PotionSlotCap * CombatSchemaV1.SimPotionSlotSize;
+        public static readonly int PlayerRelicCountersBytes = CombatSimLayout.RelicCounterCap * sizeof(byte);
 
         public static readonly int RoundOffset;
         public static readonly int CurrentSideOffset;
@@ -243,12 +252,14 @@ internal static class CombatSchemaV1
         public static readonly int EnergyOffset;
         public static readonly int MaxEnergyOffset;
         public static readonly int PlayerStarsOffset;
+        public static readonly int AscensionFlagsOffset;
         public static readonly int PlayerPowerBitmapOffset;
         public static readonly int PlayerPowerValuesOffset;
         public static readonly int PlayerPowerInternalOffset;
         public static readonly int PlayerPotionSlotCountOffset;
         public static readonly int PlayerCanRemovePotionsOffset;
         public static readonly int PlayerPotionsOffset;
+        public static readonly int PlayerRelicCountersOffset;
         public static readonly int TotalBytes;
 
         static Player()
@@ -281,6 +292,9 @@ internal static class CombatSchemaV1
             PlayerStarsOffset = offset;
             offset += sizeof(ushort);
 
+            AscensionFlagsOffset = offset;
+            offset += sizeof(ushort);
+
             PlayerPowerBitmapOffset = offset;
             offset += PlayerPowerBitmapBytes;
 
@@ -298,6 +312,9 @@ internal static class CombatSchemaV1
 
             PlayerPotionsOffset = offset;
             offset += PlayerPotionsBytes;
+
+            PlayerRelicCountersOffset = offset;
+            offset += PlayerRelicCountersBytes;
 
             TotalBytes = offset;
         }
@@ -318,6 +335,7 @@ internal static class CombatSchemaV1
         public static readonly int EnemyPowerInternalBytes = EnemyCap * CombatSchemaV1.SimPowerInternalSize;
         public static readonly int EnemyMoveSmBytes = EnemyCap * CombatSchemaV1.SimEnemyMoveSMSize;
         public static readonly int EnemyMoveTableHandleBytes = EnemyCap * sizeof(ushort);
+        public static readonly int EnemyMoveEffectsBytes = EnemyCap * CombatSimLayout.MoveEffectCap * CombatSchemaV1.SimMoveEffectSize;
 
         public static readonly int EnemyCountOffset;
         public static readonly int EnemyHpOffset;
@@ -331,6 +349,7 @@ internal static class CombatSchemaV1
         public static readonly int EnemyPowerInternalOffset;
         public static readonly int EnemyMoveSmOffset;
         public static readonly int EnemyMoveTableHandleOffset;
+        public static readonly int EnemyMoveEffectsOffset;
         public static readonly int TotalBytes;
 
         static Enemies()
@@ -378,6 +397,9 @@ internal static class CombatSchemaV1
 
             EnemyMoveTableHandleOffset = offset;
             offset += EnemyMoveTableHandleBytes;
+
+            EnemyMoveEffectsOffset = offset;
+            offset += EnemyMoveEffectsBytes;
 
             TotalBytes = offset;
         }
