@@ -15,6 +15,30 @@ internal enum SimMoveEffectKind : byte
     /// <summary>A creature summoned. <c>PowerType</c> field repurposed to hold a
     /// <see cref="SimSummonTargetId"/> instead of a power index; <c>Amount</c> = how many.</summary>
     Summon = 4,
+    /// <summary>A fresh Status/Curse card minted into the PLAYER's pile — always the player, never
+    /// self (matches every known StatusIntent monster move: <c>CardPileCmd.AddToCombatAndPreview</c>
+    /// always targets the move's <c>targets</c> param, i.e. the player side). <c>PowerType</c> field
+    /// repurposed to hold a <see cref="SimCardId"/> instead of a power index; <c>Amount</c> = how
+    /// many copies. Only covers the fixed-position "append to Discard" shape — moves that insert at
+    /// a random pile position or target Hand/Draw instead of Discard aren't covered by this kind yet
+    /// (see dev_docs/Enemy_Intent_Payload_Backlog.md).</summary>
+    CardInject = 5,
+    /// <summary>Same as <see cref="CardInject"/> (fixed count, appended to the bottom) but targets
+    /// the player's HAND instead of Discard — a couple of StatusIntent moves
+    /// (Myte's TOXIC_MOVE, MechaKnight's FLAMETHROWER_MOVE) call
+    /// <c>CardPileCmd.AddToCombatAndPreview&lt;T&gt;(targets, PileType.Hand, count, null)</c> instead
+    /// of the far more common <c>PileType.Discard</c>. A separate Kind rather than a third
+    /// <see cref="SimMoveEffect"/> field, to avoid growing the struct for a two-monster case.</summary>
+    CardInjectHand = 6,
+    /// <summary>Same as <see cref="CardInject"/> but at a RANDOM position in the player's DRAW pile
+    /// instead of appended to Discard — mirrors <c>CardPilePosition.Random</c>'s game-source
+    /// resolution (<c>Rng.Shuffle.NextInt(pile.Count + 1)</c>, re-rolled per card when
+    /// <c>Amount</c> &gt; 1). Consumes the <see cref="SimRngSlot.Shuffle"/> stream.</summary>
+    CardInjectDrawRandom = 7,
+    /// <summary>Same as <see cref="CardInjectDrawRandom"/> but targets Discard instead of Draw
+    /// (e.g. TheInsatiable's LIQUIFY_GROUND_MOVE splits into a Draw-random half and a
+    /// Discard-random half).</summary>
+    CardInjectDiscardRandom = 8,
 }
 
 /// <summary>
@@ -31,6 +55,6 @@ internal enum SimMoveEffectKind : byte
 internal struct SimMoveEffect
 {
     public byte Kind;        // SimMoveEffectKind
-    public ushort PowerType; // SimPowerType index when Kind == PowerApply; SimSummonTargetId when Kind == Summon
+    public ushort PowerType; // SimPowerType index when Kind == PowerApply; SimSummonTargetId when Kind == Summon; SimCardId when Kind == CardInject
     public short Amount;
 }

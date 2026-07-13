@@ -202,6 +202,7 @@ internal static class CombatBlobVerifier
             Cmp($"E{i}.HP", s_blob.EnemyHp[i], e.CurrentHp);
             Cmp($"E{i}.MaxHP", s_blob.EnemyMaxHp[i], e.MaxHp);
             Cmp($"E{i}.Block", s_blob.EnemyBlock[i], e.Block);
+            Cmp($"E{i}.Kind", s_blob.EnemyMonsterKind[i], SimMonsterKind.Of(e.Monster));
 
             DiffIntent(sim, i, e, ref simAllOk);
 
@@ -1186,6 +1187,7 @@ internal static class CombatBlobVerifier
         var move = e.Monster?.NextMove;
         SimIntent liveKind = SimIntent.Unknown;
         ushort liveDmg = 0;
+        ushort liveRawDmg = 0;
         byte liveHits = 0;
         if (move != null && move.Intents.Count > 0)
         {
@@ -1194,11 +1196,13 @@ internal static class CombatBlobVerifier
                 case DeathBlowIntent dbi:
                     liveKind = SimIntent.DeathBlow;
                     liveDmg = AttackDamageFor(dbi, e);
+                    liveRawDmg = RawAttackDamageFor(dbi);
                     liveHits = AttackHitsFor(dbi);
                     break;
                 case AttackIntent ai:
                     liveKind = SimIntent.Attack;
                     liveDmg = AttackDamageFor(ai, e);
+                    liveRawDmg = RawAttackDamageFor(ai);
                     liveHits = AttackHitsFor(ai);
                     break;
                 case BuffIntent:
@@ -1247,11 +1251,15 @@ internal static class CombatBlobVerifier
         if (liveKind == SimIntent.Attack || liveKind == SimIntent.DeathBlow)
         {
             ushort simDmg = s_blob.EnemyIntentDmg[i];
+            ushort simRawDmg = s_blob.EnemyIntentRawDmg[i];
             byte simHits = s_blob.EnemyIntentHits[i];
             bool dmgOk = simDmg == liveDmg;
+            bool rawDmgOk = simRawDmg == liveRawDmg;
             bool hitsOk = simHits == liveHits;
             if (!dmgOk) { allOk = false; AddStandalone(section, $"✗ E{i}.Dmg: blob={simDmg} live={liveDmg}"); }
             else { AddData(section, $"✓ E{i}.Dmg={simDmg}"); }
+            if (!rawDmgOk) { allOk = false; AddStandalone(section, $"✗ E{i}.RawDmg: blob={simRawDmg} live={liveRawDmg}"); }
+            else { AddData(section, $"✓ E{i}.RawDmg={simRawDmg}"); }
             if (!hitsOk) { allOk = false; AddStandalone(section, $"✗ E{i}.Hits: blob={simHits} live={liveHits}"); }
             else { AddData(section, $"✓ E{i}.Hits={simHits}"); }
         }
@@ -1265,6 +1273,18 @@ internal static class CombatBlobVerifier
     {
         if (ai.DamageCalc == null) return 0;
         int dmg = ai.GetSingleDamage(Array.Empty<Creature>(), enemy);
+        if (dmg < 0) return 0;
+        if (dmg > 65535) return 65535;
+        return (ushort)dmg;
+    }
+
+    /// <summary>Raw DamageCalc(), no Hook.ModifyDamage — the "live" side of
+    /// <see cref="CombatNodeBlobSnapshot.RawAttackDamage"/>'s verification, added 2026-07-10 so a
+    /// forward-simulating search has a non-stale per-hit base value to recompute from.</summary>
+    private static ushort RawAttackDamageFor(AttackIntent ai)
+    {
+        if (ai.DamageCalc == null) return 0;
+        decimal dmg = ai.DamageCalc();
         if (dmg < 0) return 0;
         if (dmg > 65535) return 65535;
         return (ushort)dmg;

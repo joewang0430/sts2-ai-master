@@ -121,6 +121,13 @@ internal static class SimMoveEffectVerifier
                     // Not verified: would need to track enemy-slot-count deltas, a different
                     // mechanism than the Block/Power before/after tracking this class does.
                     break;
+                case SimMoveEffectKind.CardInject:
+                case SimMoveEffectKind.CardInjectHand:
+                case SimMoveEffectKind.CardInjectDrawRandom:
+                case SimMoveEffectKind.CardInjectDiscardRandom:
+                    // Not verified: would need to track player pile-content deltas, a different
+                    // mechanism than the Block/Power before/after tracking this class does.
+                    break;
             }
         }
         return sb.ToString();

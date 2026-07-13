@@ -44,7 +44,9 @@ internal enum SimIntent : byte
     /// <summary>HiddenIntent: deliberately obscured (UI shows ?). Treat as Unknown.</summary>
     Hidden       = 8,
 
-    /// <summary>SummonIntent: spawns one or more new creatures. Identity & count not yet captured.</summary>
+    /// <summary>SummonIntent: spawns one or more new creatures. Identity & count captured in
+    /// <see cref="SimMoveEffectKind.Summon"/> for monsters registered in <see cref="SimMonsterMoveEffects"/>;
+    /// execution covered for a subset of targets, see <see cref="SimEnemySummonOps"/>.</summary>
     Summon       = 9,
 
     /// <summary>SleepIntent: skip-turn marker (typically with AsleepPower).</summary>
@@ -53,10 +55,14 @@ internal enum SimIntent : byte
     /// <summary>StunIntent: skip-turn marker (different visual from Sleep).</summary>
     Stun         = 11,
 
-    /// <summary>StatusIntent: shuffles a status card (Slimed/etc.) into the player's pile.</summary>
+    /// <summary>StatusIntent: shuffles a status card (Slimed/etc.) into the player's pile. Captured
+    /// as <see cref="SimMoveEffectKind.CardInject"/> for monsters registered in
+    /// <see cref="SimMonsterMoveEffects"/>.</summary>
     StatusCard   = 12,
 
-    /// <summary>CardDebuffIntent: shuffles a curse card into the player's pile.</summary>
+    /// <summary>CardDebuffIntent — despite the name, does NOT shuffle in a curse card for any of the
+    /// 4 known monsters that use it (VineShambler/LivingFog/Queen/ThievingHopper): each applies a
+    /// Power that afflicts existing cards, or steals one. Not yet executable.</summary>
     CardDebuff   = 13,
 
     /// <summary>DeathBlowIntent: subclass of attack that triggers special on-kill logic. <c>EnemyIntentDmg</c> + <c>EnemyIntentHits</c> are valid.</summary>

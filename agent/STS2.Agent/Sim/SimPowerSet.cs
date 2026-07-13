@@ -62,6 +62,30 @@ internal static class SimPowerSet
     public static void Set(ref SimPowerBitmap bitmap, int type)
         => bitmap[type / BitsPerWord] |= 1UL << (type % BitsPerWord);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Clear(ref SimPowerBitmap bitmap, int type)
+        => bitmap[type / BitsPerWord] &= ~(1UL << (type % BitsPerWord));
+
+    /// <summary>Insert <paramref name="value"/> at <paramref name="pos"/>, shifting the
+    /// <paramref name="count"/> existing entries at/after <paramref name="pos"/> up by one.
+    /// Caller sets the bitmap bit separately (before or after — insertion only touches values).
+    /// Takes the same <c>Span&lt;short&gt;</c> shape <see cref="CombatNodeBlob"/> already exposes
+    /// (PlayerPowerValues / a per-enemy slice / OstyPowerValues), not the raw inline-array type.</summary>
+    public static void InsertValue(Span<short> values, int pos, int count, short value)
+    {
+        for (int i = count; i > pos; i--)
+            values[i] = values[i - 1];
+        values[pos] = value;
+    }
+
+    /// <summary>Remove the entry at <paramref name="pos"/>, shifting the remaining entries after it
+    /// down by one. Caller clears the bitmap bit separately.</summary>
+    public static void RemoveValue(Span<short> values, int pos, int count)
+    {
+        for (int i = pos; i < count - 1; i++)
+            values[i] = values[i + 1];
+    }
+
     /// <summary>
     /// Number of set bits at indices &lt; <paramref name="type"/> — this power's position in the
     /// paired <see cref="SimPowerValues"/> list. Cost: at most <see cref="WordCount"/> POPCNT ops,

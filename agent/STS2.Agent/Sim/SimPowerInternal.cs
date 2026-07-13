@@ -90,6 +90,14 @@ internal struct SimPowerInternal : IEquatable<SimPowerInternal>
     public const byte FlagNemesisShouldApplyIntangible = 0x02;
     /// <summary>RitualPower._wasJustAppliedByEnemy — set true on AfterApplied (enemy-owned), cleared on first AfterTurnEnd to suppress same-turn Strength gain.</summary>
     public const byte FlagRitualWasJustAppliedByEnemy = 0x04;
+    /// <summary>Mirrors PowerCmd.Apply's generic SkipNextDurationTick, narrowed to the one case that
+    /// actually consumes it (WeakPower/VulnerablePower/FrailPower's AfterSideTurnEnd → TickDownDuration):
+    /// set when this creature freshly receives Weak/Vulnerable/Frail while it's the PLAYER (the real
+    /// game only ever sets this for a Player-side owner), consumed (checked-and-cleared) the next
+    /// time <see cref="SimTurnPowerOps"/> would otherwise decay that specific power.</summary>
+    public const byte FlagSkipWeakTick        = 0x08;
+    public const byte FlagSkipVulnerableTick  = 0x10;
+    public const byte FlagSkipFrailTick       = 0x20;
 
     public readonly bool Equals(SimPowerInternal other)
         => FeralZeroCostAttacks == other.FeralZeroCostAttacks

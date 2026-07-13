@@ -103,6 +103,7 @@ internal static class CombatNodeBlobSnapshot
             dst.EnemyHp[i] = ClampU16(enemy.CurrentHp);
             dst.EnemyMaxHp[i] = ClampU16(enemy.MaxHp);
             dst.EnemyBlock[i] = ClampU16(enemy.Block);
+            dst.EnemyMonsterKind[i] = SimMonsterKind.Of(enemy.Monster);
 
             WritePowerSet(enemy.Powers, ref dst.EnemyPowerBitmaps[i], SimPowerOps.GetEnemyValues(dst, i), $"enemy[{i}]");
 
@@ -490,7 +491,9 @@ internal static class CombatNodeBlobSnapshot
         }
 
         Span<SimMoveEffect> effectSlots = dst.EnemyMoveEffects.Slice(idx * CombatSimLayout.MoveEffectCap, CombatSimLayout.MoveEffectCap);
-        SimMonsterMoveEffects.Write(enemy, move, ascensionFlags, effectSlots);
+        int effectCount = SimMonsterMoveEffects.Write(enemy, move, ascensionFlags, effectSlots);
+        dst.EnemyMoveEffectCount[idx] = (byte)effectCount;
+        dst.EnemyMoveEffectNonDefaultTarget[idx] = (byte)(SimMonsterMoveEffects.HasNonDefaultTarget(enemy.Monster) ? 1 : 0);
 
         AbstractIntent first = move.Intents[0];
         switch (first)
@@ -498,11 +501,13 @@ internal static class CombatNodeBlobSnapshot
             case DeathBlowIntent dbi:
                 dst.EnemyIntent[idx] = (byte)SimIntent.DeathBlow;
                 dst.EnemyIntentDmg[idx] = AttackDamage(dbi, enemy);
+                dst.EnemyIntentRawDmg[idx] = RawAttackDamage(dbi);
                 dst.EnemyIntentHits[idx] = AttackHits(dbi);
                 break;
             case AttackIntent ai:
                 dst.EnemyIntent[idx] = (byte)SimIntent.Attack;
                 dst.EnemyIntentDmg[idx] = AttackDamage(ai, enemy);
+                dst.EnemyIntentRawDmg[idx] = RawAttackDamage(ai);
                 dst.EnemyIntentHits[idx] = AttackHits(ai);
                 break;
             case BuffIntent:
@@ -620,6 +625,23 @@ internal static class CombatNodeBlobSnapshot
     {
         if (intent.DamageCalc == null) return 0;
         int dmg = intent.GetSingleDamage(Array.Empty<Creature>(), enemy);
+        if (dmg < 0) return 0;
+        if (dmg > 65535) return 65535;
+        return (ushort)dmg;
+    }
+
+    /// <summary>
+    /// Per-hit damage BEFORE Strength/Weak/Vulnerable/Cap (the raw <c>AttackIntent.DamageCalc()</c>
+    /// value, no Hook.ModifyDamage applied) — the value a forward-simulating search must start from,
+    /// since <see cref="AttackDamage"/>'s post-modifier value is baked in against whatever the
+    /// player's/enemy's power state happened to be at snapshot time and goes stale the moment either
+    /// side's Strength/Weak/Vulnerable/damage-cap changes before this move actually executes. See
+    /// SimEnemyAttackOps for the executor that recomputes damage fresh from this raw value.
+    /// </summary>
+    private static ushort RawAttackDamage(AttackIntent intent)
+    {
+        if (intent.DamageCalc == null) return 0;
+        decimal dmg = intent.DamageCalc();
         if (dmg < 0) return 0;
         if (dmg > 65535) return 65535;
         return (ushort)dmg;

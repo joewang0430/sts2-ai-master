@@ -573,6 +573,12 @@ internal static class CombatDebugOverlay
         var sb = new StringBuilder(256);
         sb.AppendLine("── DMG PREVIEW ─────────");
 
+        if (SimCardEffectVerifier.LastReport.Length > 0)
+        {
+            sb.AppendLine(SimCardEffectVerifier.LastReport);
+            sb.AppendLine();
+        }
+
         Player? me = LocalContext.GetMe(state);
         if (me?.PlayerCombatState is not { } pcs) return sb.ToString();
 

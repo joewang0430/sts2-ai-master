@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.MonsterMoves;
+using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.MonsterMoves.MonsterMoveStateMachine;
 
 namespace STS2.Agent.Sim;
@@ -26,6 +27,13 @@ namespace STS2.Agent.Sim;
 /// </summary>
 internal sealed class MonsterStateTable
 {
+    /// <summary>The monster Type this table was built for — needed to call back into
+    /// <see cref="SimMonsterMoveAdvance.TryAdvance"/> / <see cref="SimMonsterMoveEffects.Write(Type,string,ushort,Span{SimMoveEffect})"/>
+    /// starting from just a <see cref="CombatNodeBlob.EnemyMoveTableHandles"/> handle (the blob
+    /// itself has no per-enemy Type field — <see cref="SimMonsterStateRegistry.Resolve"/> is the only
+    /// path from a handle back to a Type).</summary>
+    public readonly Type MonsterType;
+
     /// <summary>State indices → original string ids. Sorted ordinal for
     /// determinism across processes (Dictionary key order is otherwise
     /// insertion-order-biased and may differ if game source rearranges states).</summary>
@@ -43,8 +51,18 @@ internal sealed class MonsterStateTable
     /// Same purpose: branchless filter for the StateLog-append decision.</summary>
     public readonly bool[] ShouldAppearInLogs;
 
+    /// <summary>Per-state <see cref="SimIntent"/> classification, read from the state's cached
+    /// <see cref="MoveState.Intents"/>[0] <c>IntentType</c> (0/Unknown for non-move states). Safe to
+    /// cache forever at Type level — unlike the intent's numeric payload (damage/hits/stacks), the
+    /// intent CLASS is fixed by which <c>AbstractIntent</c> subclass the state was built with; it
+    /// never depends on ascension or live mutable creature state. See
+    /// <see cref="SimMonsterMoveEffects"/>/the (forthcoming) attack-damage registry for the numeric
+    /// payload, which DOES need per-call resolution against ascensionFlags / blob state.</summary>
+    public readonly SimIntent[] IntentClass;
+
     internal MonsterStateTable(Type monsterType, MonsterMoveStateMachine machine)
     {
+        MonsterType = monsterType;
         Dictionary<string, MonsterState> states = machine.States;
         int n = states.Count;
         if (n == 0)
@@ -70,6 +88,7 @@ internal sealed class MonsterStateTable
 
         IsMove             = new bool[n];
         ShouldAppearInLogs = new bool[n];
+        IntentClass        = new SimIntent[n];
         Dictionary<string, byte> tmp = new(n, StringComparer.Ordinal);
         for (byte b = 0; b < n; b++)
         {
@@ -78,6 +97,9 @@ internal sealed class MonsterStateTable
             MonsterState st = states[id];
             IsMove[b]             = st.IsMove;
             ShouldAppearInLogs[b] = st.ShouldAppearInLogs;
+            IntentClass[b] = st is MoveState { Intents.Count: > 0 } ms
+                ? ClassifyIntent(ms.Intents[0])
+                : SimIntent.Unknown;
         }
         IdToIdx = tmp.ToFrozenDictionary(StringComparer.Ordinal);
 
@@ -86,6 +108,27 @@ internal sealed class MonsterStateTable
         // list once and assert. (Costs ~µs per Type, paid once.)
         VerifyHistoryCaps(monsterType, states);
     }
+
+    /// <summary>Mirrors <c>CombatNodeBlobSnapshot.CaptureIntent</c>'s switch exactly (kept in sync
+    /// manually — both read the same <c>AbstractIntent</c> subclass taxonomy).</summary>
+    private static SimIntent ClassifyIntent(AbstractIntent first) => first switch
+    {
+        DeathBlowIntent               => SimIntent.DeathBlow,
+        AttackIntent                  => SimIntent.Attack,
+        BuffIntent                    => SimIntent.Buff,
+        CardDebuffIntent              => SimIntent.CardDebuff,
+        DebuffIntent { IntentType: IntentType.DebuffStrong } => SimIntent.DebuffStrong,
+        DebuffIntent                  => SimIntent.Debuff,
+        DefendIntent                  => SimIntent.Defend,
+        EscapeIntent                  => SimIntent.Escape,
+        HealIntent                    => SimIntent.Heal,
+        HiddenIntent                  => SimIntent.Hidden,
+        SleepIntent                   => SimIntent.Sleep,
+        StatusIntent                  => SimIntent.StatusCard,
+        StunIntent                    => SimIntent.Stun,
+        SummonIntent                  => SimIntent.Summon,
+        _                             => SimIntent.Unknown,
+    };
 
     private static void VerifyHistoryCaps(Type monsterType, Dictionary<string, MonsterState> states)
     {
@@ -169,6 +212,20 @@ internal static class SimMonsterStateRegistry
         MonsterStateTable table = _tables.GetOrAdd(t, _ => new MonsterStateTable(t, sm));
         EnsureHandle(t, table);
         return table;
+    }
+
+    /// <summary>Looks up an already-registered handle by monster <see cref="Type"/> WITHOUT a live
+    /// <see cref="MonsterModel"/> instance — unlike <see cref="GetOrBuild"/>, never constructs one.
+    /// Needed by Summon execution: a freshly-created enemy has no live game object backing it, so we
+    /// can't call <c>GetOrBuild</c> for it. Returns false (not a throw) if this process has never
+    /// seen a live instance of <paramref name="monsterType"/> before — the caller decides whether
+    /// that's fail-loud-worthy for its situation.</summary>
+    public static bool TryGetExistingHandle(Type monsterType, out ushort handle)
+    {
+        lock (_handleGate)
+        {
+            return _handlesByType.TryGetValue(monsterType, out handle);
+        }
     }
 
     public static ushort GetHandle(MonsterStateTable? table)

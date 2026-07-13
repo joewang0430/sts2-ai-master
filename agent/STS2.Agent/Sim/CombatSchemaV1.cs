@@ -328,6 +328,7 @@ internal static class CombatSchemaV1
         public static readonly int EnemyMaxHpBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyBlockBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyIntentDmgBytes = EnemyCap * sizeof(ushort);
+        public static readonly int EnemyIntentRawDmgBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyIntentHitsBytes = EnemyCap * sizeof(byte);
         public static readonly int EnemyIntentBytes = EnemyCap * sizeof(byte);
         public static readonly int EnemyPowerBitmapsBytes = EnemyCap * CombatSchemaV1.SimPowerBitmapSize;
@@ -336,12 +337,16 @@ internal static class CombatSchemaV1
         public static readonly int EnemyMoveSmBytes = EnemyCap * CombatSchemaV1.SimEnemyMoveSMSize;
         public static readonly int EnemyMoveTableHandleBytes = EnemyCap * sizeof(ushort);
         public static readonly int EnemyMoveEffectsBytes = EnemyCap * CombatSimLayout.MoveEffectCap * CombatSchemaV1.SimMoveEffectSize;
+        public static readonly int EnemyMoveEffectCountBytes = EnemyCap * sizeof(byte);
+        public static readonly int EnemyMoveEffectNonDefaultTargetBytes = EnemyCap * sizeof(byte);
+        public static readonly int EnemyMonsterKindBytes = EnemyCap * sizeof(ushort);
 
         public static readonly int EnemyCountOffset;
         public static readonly int EnemyHpOffset;
         public static readonly int EnemyMaxHpOffset;
         public static readonly int EnemyBlockOffset;
         public static readonly int EnemyIntentDmgOffset;
+        public static readonly int EnemyIntentRawDmgOffset;
         public static readonly int EnemyIntentHitsOffset;
         public static readonly int EnemyIntentOffset;
         public static readonly int EnemyPowerBitmapsOffset;
@@ -350,6 +355,9 @@ internal static class CombatSchemaV1
         public static readonly int EnemyMoveSmOffset;
         public static readonly int EnemyMoveTableHandleOffset;
         public static readonly int EnemyMoveEffectsOffset;
+        public static readonly int EnemyMoveEffectCountOffset;
+        public static readonly int EnemyMoveEffectNonDefaultTargetOffset;
+        public static readonly int EnemyMonsterKindOffset;
         public static readonly int TotalBytes;
 
         static Enemies()
@@ -372,6 +380,9 @@ internal static class CombatSchemaV1
 
             EnemyIntentDmgOffset = offset;
             offset += EnemyIntentDmgBytes;
+
+            EnemyIntentRawDmgOffset = offset;
+            offset += EnemyIntentRawDmgBytes;
 
             EnemyIntentHitsOffset = offset;
             offset += EnemyIntentHitsBytes;
@@ -400,6 +411,17 @@ internal static class CombatSchemaV1
 
             EnemyMoveEffectsOffset = offset;
             offset += EnemyMoveEffectsBytes;
+
+            EnemyMoveEffectCountOffset = offset;
+            offset += EnemyMoveEffectCountBytes;
+
+            EnemyMoveEffectNonDefaultTargetOffset = offset;
+            offset += EnemyMoveEffectNonDefaultTargetBytes;
+
+            offset = AlignUp(offset, sizeof(ushort));
+
+            EnemyMonsterKindOffset = offset;
+            offset += EnemyMonsterKindBytes;
 
             TotalBytes = offset;
         }
